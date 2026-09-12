@@ -1,0 +1,1 @@
+REQ-001 - separate the html from messageServer.go and put it in the "templates" dir
