@@ -1,0 +1,28 @@
+{
+  "name": "messages-webapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "React client for messageServer, built by webpack and served by the Go server at /webapp",
+  "bin": {
+    "messages-webapp": "./cli.js"
+  },
+  "scripts": {
+    "build": "node cli.js build",
+    "dev": "node cli.js dev",
+    "clean": "node cli.js clean"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-env": "^7.26.0",
+    "@babel/preset-react": "^7.26.3",
+    "babel-loader": "^9.2.1",
+    "css-loader": "^7.1.2",
+    "html-webpack-plugin": "^5.6.3",
+    "style-loader": "^4.0.0",
+    "webpack": "^5.97.1"
+  }
+}

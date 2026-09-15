@@ -77,19 +77,116 @@
     color: #3c3c43;
   }
   #who-bar {
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     font-size: 11px;
     color: #8e8e93;
     padding: 4px;
     flex-shrink: 0;
   }
-  #who-bar select {
+  #who-bar button {
     font-size: 11px;
     border: none;
     background: transparent;
     color: var(--blue);
     font-weight: 600;
+    cursor: pointer;
+    padding: 0;
   }
+  /* The people panel: username, directory search, and who is in the chat.
+     It slides over the transcript because it is a mode, not a sidebar — the
+     phone frame is too narrow to show both at once. */
+  #people-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+  }
+  #people-panel.show { display: flex; }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid #d1d1d6;
+    font-size: 15px;
+  }
+  .panel-head button {
+    border: none;
+    background: transparent;
+    color: var(--blue);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px 20px;
+  }
+  .field-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #8e8e93;
+    margin: 16px 0 6px;
+  }
+  .panel-body .field-label:first-child { margin-top: 0; }
+  .row-inline { display: flex; gap: 8px; }
+  .panel-body input {
+    flex: 1;
+    width: 100%;
+    border: 1px solid #c7c7cc;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 15px;
+    background: #fff;
+    outline: none;
+    font-family: inherit;
+  }
+  .panel-body input:focus { border-color: var(--blue); }
+  #username-save {
+    border: none;
+    border-radius: 10px;
+    background: var(--blue);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0 14px;
+    cursor: pointer;
+  }
+  .hint { font-size: 11px; color: #8e8e93; margin: 6px 0 0; line-height: 1.4; }
+  .hint.error { color: #d70015; }
+  .people-list { list-style: none; margin: 0; padding: 0; }
+  .people-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 2px;
+    border-bottom: 1px solid #e3e3e8;
+    font-size: 15px;
+  }
+  .people-list li:last-child { border-bottom: none; }
+  .people-list button {
+    border: none;
+    border-radius: 14px;
+    background: var(--blue);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .people-list button.remove { background: #e5e5ea; color: #d70015; }
+  .people-list button:disabled { background: #e5e5ea; color: #8e8e93; cursor: default; }
+  .empty { font-size: 13px; color: #8e8e93; padding: 8px 2px; }
   .messages {
     flex: 1;
     overflow-y: auto;
@@ -163,6 +260,53 @@
     flex-shrink: 0;
   }
   #send-btn:disabled { background: #c7c7cc; cursor: default; }
+  /* Shown over the conversation when this browser's key is not authorized.
+     It covers the transcript because there is nothing to show underneath. */
+  #auth-gate {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: 28px 22px;
+    text-align: center;
+  }
+  #auth-gate.show { display: flex; }
+  #auth-gate h2 { font-size: 17px; margin: 0; }
+  #auth-gate p { font-size: 13px; color: #3c3c43; margin: 0; line-height: 1.45; }
+  #auth-key {
+    width: 100%;
+    height: 96px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 9px;
+    border: 1px solid #c7c7cc;
+    border-radius: 10px;
+    padding: 8px;
+    resize: none;
+    background: #fff;
+    color: #000;
+  }
+  #auth-gate code {
+    display: block;
+    font-size: 11px;
+    background: #e5e5ea;
+    border-radius: 8px;
+    padding: 7px 9px;
+    word-break: break-all;
+  }
+  #copy-key {
+    align-self: center;
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    border-radius: 16px;
+    padding: 7px 18px;
+    font-size: 14px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -177,37 +321,229 @@
     <div class="contact-name" id="contact-name">&nbsp;</div>
   </div>
   <div id="who-bar">
-    You are:
-    <select id="who-select"></select>
+    <span id="who-label">Setting up&hellip;</span>
+    <button id="people-btn" type="button">People</button>
   </div>
   <div class="messages" id="messages"></div>
   <div class="input-bar">
     <textarea id="text-input" rows="1" placeholder="iMessage"></textarea>
     <button id="send-btn">&uarr;</button>
   </div>
+  <div id="people-panel">
+    <div class="panel-head">
+      <strong>Your chat</strong>
+      <button id="people-close" type="button">Done</button>
+    </div>
+    <div class="panel-body">
+      <label class="field-label" for="username-input">Your username</label>
+      <div class="row-inline">
+        <input id="username-input" type="text" maxlength="20" placeholder="pick a name"
+               autocomplete="off" spellcheck="false">
+        <button id="username-save" type="button">Save</button>
+      </div>
+      <p class="hint" id="username-hint">3&ndash;20 characters: letters, digits, and . _ - between them.</p>
+
+      <label class="field-label" for="search-input">Add people</label>
+      <input id="search-input" type="search" placeholder="Search usernames"
+             autocomplete="off" spellcheck="false">
+      <ul class="people-list" id="search-results"></ul>
+
+      <span class="field-label">In your chat</span>
+      <ul class="people-list" id="member-list"></ul>
+    </div>
+  </div>
+  <div id="auth-gate">
+    <h2 id="auth-title">This browser isn&rsquo;t authorized</h2>
+    <p id="auth-detail">Give this public key to whoever runs the server:</p>
+    <textarea id="auth-key" readonly></textarea>
+    <button id="copy-key">Copy public key</button>
+    <code>messageServer -authorize &lsquo;&hellip;&rsquo;</code>
+    <p>Only the public key leaves this browser. The private key stays in this
+       browser&rsquo;s storage and cannot be exported.</p>
+  </div>
 </div>
 
 <script>
-let me = localStorage.getItem('chatUser') || '';
-let participants = [];
+// ---------------------------------------------------------------------------
+// Identity
+//
+// This browser owns an RSA key pair, generated once and kept in IndexedDB. The
+// private key is created non-extractable, so it cannot be read back out even by
+// this page's own script — it can only be handed to crypto.subtle.sign. The
+// public key travels on every request, along with a signature the Go server
+// verifies before checking the key against authorizedUsers.
+// ---------------------------------------------------------------------------
+const KEY_DB = 'messagesAuth';
+const KEY_STORE = 'keys';
+const KEY_ID = 'device';
+const SIGN_ALGORITHM = { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
+
+let keyPair = null;
+let publicKeyB64 = '';
+
+function openKeyDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(KEY_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(KEY_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function dbRequest(db, mode, run) {
+  return new Promise((resolve, reject) => {
+    const request = run(db.transaction(KEY_STORE, mode).objectStore(KEY_STORE));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// Reuses the stored pair if there is one, so the key a server has authorized
+// survives a reload; otherwise creates the pair this browser keeps from now on.
+async function loadOrCreateKeys() {
+  if (!window.isSecureContext || !window.crypto?.subtle) {
+    throw new Error('Signing needs a secure context — open this page over localhost or https.');
+  }
+
+  const db = await openKeyDB();
+  let pair = await dbRequest(db, 'readonly', (store) => store.get(KEY_ID));
+  if (!pair) {
+    pair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      false, // the private half is never extractable
+      ['sign', 'verify'],
+    );
+    // Structured clone stores the CryptoKey itself, not its bytes.
+    await dbRequest(db, 'readwrite', (store) => store.put(pair, KEY_ID));
+  }
+
+  keyPair = pair;
+  const spki = await crypto.subtle.exportKey('spki', pair.publicKey);
+  publicKeyB64 = base64(spki);
+}
+
+function base64(buffer) {
+  let binary = '';
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function sha256Hex(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function nonce() {
+  return base64(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+/// fetch with the credential headers the server checks. The signature covers
+/// the method, path, query, timestamp, nonce and body hash, so it cannot be
+/// lifted onto another request or replayed.
+async function signedFetch(path, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body ? new TextEncoder().encode(options.body) : new Uint8Array();
+  const url = new URL(path, window.location.origin);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const value = nonce();
+
+  const canonical = [
+    method,
+    url.pathname,
+    url.search.replace(/^\?/, ''),
+    timestamp,
+    value,
+    await sha256Hex(body),
+  ].map((part) => part + '\n').join('');
+
+  const signature = await crypto.subtle.sign(
+    SIGN_ALGORITHM, keyPair.privateKey, new TextEncoder().encode(canonical));
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      'X-Public-Key': publicKeyB64,
+      'X-Timestamp': timestamp,
+      'X-Nonce': value,
+      'X-Signature': base64(signature),
+    },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    showAuthGate(response.status);
+    throw new Error('not authorized');
+  }
+  hideAuthGate();
+  return response;
+}
+
+const authGate = document.getElementById('auth-gate');
+
+function showAuthGate(status) {
+  document.getElementById('auth-key').value = publicKeyB64;
+  document.getElementById('auth-title').textContent = status === 403
+    ? "This browser isn't authorized"
+    : 'The server rejected this signature';
+  authGate.classList.add('show');
+}
+
+function hideAuthGate() {
+  authGate.classList.remove('show');
+}
+
+document.getElementById('copy-key').addEventListener('click', async () => {
+  const button = document.getElementById('copy-key');
+  try {
+    await navigator.clipboard.writeText(publicKeyB64);
+    button.textContent = 'Copied';
+  } catch (e) {
+    // Clipboard access can be refused; the textarea is selectable either way.
+    document.getElementById('auth-key').select();
+    button.textContent = 'Press Cmd-C';
+  }
+  setTimeout(() => { button.textContent = 'Copy public key'; }, 2000);
+});
+
+// ---------------------------------------------------------------------------
+// Identity and chat membership
+//
+// Who this browser is comes from the server, not from local storage: the
+// username belongs to the key, so the same key is the same person in any
+// browser. Messages are addressed to whoever is in the chat, which is why the
+// people panel is where a first-time user has to start.
+// ---------------------------------------------------------------------------
+let me = '';         // this browser's username, '' until one is chosen
+let members = [];    // the usernames in this browser's chat
 let lastID = 0;
 let pollTimer = null;
+let searchTimer = null;
 
-const whoSelect = document.getElementById('who-select');
 const messagesEl = document.getElementById('messages');
 const textInput = document.getElementById('text-input');
 const sendBtn = document.getElementById('send-btn');
 const contactName = document.getElementById('contact-name');
 const contactInitial = document.getElementById('contact-initial');
-
-function other() {
-  return participants.find(p => p !== me) || '';
-}
+const whoLabel = document.getElementById('who-label');
+const peoplePanel = document.getElementById('people-panel');
+const usernameInput = document.getElementById('username-input');
+const usernameHint = document.getElementById('username-hint');
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+const memberList = document.getElementById('member-list');
 
 function updateHeader() {
-  const o = other();
-  contactName.textContent = o;
-  contactInitial.textContent = o ? o[0].toUpperCase() : '?';
+  const names = members.join(', ');
+  contactName.textContent = names || 'No one in this chat yet';
+  contactInitial.textContent = members.length ? members[0][0].toUpperCase() : '?';
+  whoLabel.textContent = me ? 'You are ' + me : 'Choose a username';
 }
 
 function renderClock() {
@@ -224,7 +560,15 @@ function appendMessage(msg) {
   row.className = 'row ' + (msg.sender === me ? 'me' : 'them');
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.textContent = msg.text;
+  // In a chat with more than one other person, a bubble on its own does not
+  // say who wrote it.
+  if (msg.sender !== me && members.length > 1) {
+    const who = document.createElement('div');
+    who.style.cssText = 'font-size:11px;font-weight:600;opacity:.6;margin-bottom:2px';
+    who.textContent = msg.sender;
+    bubble.appendChild(who);
+  }
+  bubble.appendChild(document.createTextNode(msg.text));
   row.appendChild(bubble);
   messagesEl.appendChild(row);
   lastID = Math.max(lastID, msg.id);
@@ -234,33 +578,156 @@ function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-async function loadParticipants() {
-  const res = await fetch('/api/participants');
-  participants = await res.json();
-  whoSelect.innerHTML = '';
-  for (const p of participants) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    whoSelect.appendChild(opt);
-  }
-  if (!participants.includes(me)) me = participants[0];
-  whoSelect.value = me;
+// ---------------------------------------------------------------------------
+// The people panel
+// ---------------------------------------------------------------------------
+
+function openPeople() {
+  peoplePanel.classList.add('show');
+  if (!me) usernameInput.focus();
+  runSearch();
+}
+
+function closePeople() {
+  peoplePanel.classList.remove('show');
+}
+
+document.getElementById('people-btn').addEventListener('click', openPeople);
+document.getElementById('people-close').addEventListener('click', closePeople);
+
+function hint(text, isError) {
+  usernameHint.textContent = text;
+  usernameHint.classList.toggle('error', Boolean(isError));
+}
+
+/// Reads who this browser is and who is in its chat. Everything else on the
+/// panel is drawn from this one answer.
+async function refreshChat() {
+  const res = await signedFetch('/api/chat');
+  const chat = await res.json();
+  me = chat.username || '';
+  members = chat.members || [];
+  if (document.activeElement !== usernameInput) usernameInput.value = me;
+  renderMembers();
   updateHeader();
 }
 
-whoSelect.addEventListener('change', () => {
-  me = whoSelect.value;
-  localStorage.setItem('chatUser', me);
-  messagesEl.innerHTML = '';
-  lastID = 0;
-  updateHeader();
-  poll();
+async function saveUsername() {
+  const value = usernameInput.value.trim();
+  if (!value) return;
+  const res = await signedFetch('/api/username', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: value }),
+  });
+  if (!res.ok) {
+    hint((await res.text()).trim(), true);
+    return;
+  }
+  await refreshChat();
+  hint('Saved. Other people can find you as ' + me + '.', false);
+  await runSearch();
+}
+
+document.getElementById('username-save').addEventListener('click', () => saveUsername().catch(() => {}));
+usernameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveUsername().catch(() => {});
+  }
 });
+
+/// Searches the directory. An empty box lists everyone, so there is something
+/// to add before the user knows any names to type.
+async function runSearch() {
+  const res = await signedFetch('/api/users?q=' + encodeURIComponent(searchInput.value.trim()));
+  const found = await res.json();
+  searchResults.innerHTML = '';
+  if (!found.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = searchInput.value.trim()
+      ? 'Nobody by that name'
+      : 'Nobody else has chosen a username yet';
+    searchResults.appendChild(empty);
+    return;
+  }
+  for (const user of found) {
+    searchResults.appendChild(personRow(user.username, user.inChat ? 'added' : 'add'));
+  }
+}
+
+searchInput.addEventListener('input', () => {
+  // Debounced: the directory is a database query, and a key press is not a
+  // reason to run one.
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runSearch().catch(() => {}), 200);
+});
+
+function renderMembers() {
+  memberList.innerHTML = '';
+  if (!members.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'Search above to add someone.';
+    memberList.appendChild(empty);
+    return;
+  }
+  for (const name of members) {
+    memberList.appendChild(personRow(name, 'remove'));
+  }
+}
+
+/// One row of a people list: a name and the one thing you can do with it.
+function personRow(username, action) {
+  const row = document.createElement('li');
+  const label = document.createElement('span');
+  label.textContent = username;
+  row.appendChild(label);
+
+  const button = document.createElement('button');
+  if (action === 'added') {
+    button.textContent = 'In chat';
+    button.disabled = true;
+  } else if (action === 'remove') {
+    button.textContent = 'Remove';
+    button.className = 'remove';
+    button.addEventListener('click', () => editChat('DELETE', username).catch(() => {}));
+  } else {
+    button.textContent = 'Add';
+    button.addEventListener('click', () => editChat('POST', username).catch(() => {}));
+  }
+  row.appendChild(button);
+  return row;
+}
+
+async function editChat(method, username) {
+  const res = method === 'POST'
+    ? await signedFetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      })
+    : await signedFetch('/api/chat?username=' + encodeURIComponent(username), { method: 'DELETE' });
+
+  if (!res.ok) {
+    hint((await res.text()).trim(), true);
+    return;
+  }
+  const chat = await res.json();
+  members = chat.members || [];
+  renderMembers();
+  updateHeader();
+  await runSearch();
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
 
 async function poll() {
   try {
-    const res = await fetch('/api/messages?since=' + lastID);
+    const res = await signedFetch('/api/messages?since=' + lastID);
     const msgs = await res.json();
     if (msgs.length) {
       const wasAtBottom = messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 20;
@@ -274,15 +741,21 @@ async function poll() {
 
 async function send() {
   const text = textInput.value.trim();
-  if (!text || !me) return;
+  if (!text) return;
+  // Without a username the server has nothing to sign the message with, so ask
+  // for one instead of posting something that can only be refused.
+  if (!me) {
+    openPeople();
+    return;
+  }
   textInput.value = '';
   textInput.style.height = 'auto';
   sendBtn.disabled = true;
   try {
-    await fetch('/api/messages', {
+    await signedFetch('/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sender: me, text: text }),
+      body: JSON.stringify({ text: text }),
     });
     await poll();
     scrollToBottom();
@@ -306,10 +779,31 @@ textInput.addEventListener('input', () => {
 });
 
 (async function init() {
-  await loadParticipants();
-  await poll();
-  scrollToBottom();
+  try {
+    // Generating a 2048-bit key takes a moment on the very first visit.
+    await loadOrCreateKeys();
+  } catch (e) {
+    showAuthGate(0);
+    document.getElementById('auth-title').textContent = 'Cannot create a key';
+    document.getElementById('auth-detail').textContent = e.message;
+    return;
+  }
+
+  try {
+    await refreshChat();
+    await poll();
+    scrollToBottom();
+    // A browser that has not named itself cannot send or be found, so open the
+    // panel on the one thing it has to do first.
+    if (!me) openPeople();
+  } catch (e) {
+    // signedFetch has already raised the gate; keep polling so the UI recovers
+    // by itself once the key is authorized.
+  }
   pollTimer = setInterval(poll, 1500);
+  // Someone else adding you changes your chat without you touching anything,
+  // so the roster is re-read on a slower beat of its own.
+  setInterval(() => refreshChat().catch(() => {}), 5000);
 })();
 </script>
 </body>

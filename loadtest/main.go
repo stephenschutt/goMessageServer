@@ -5,6 +5,11 @@
 // Usage:
 //
 //	go run ./loadtest -addr http://localhost:8080 -workers 100 -duration 30s -rate 500 -write-ratio 0.3
+//
+// The tool runs as one user: its key is authorized once and it claims a
+// username (-username) the way any client does. Every worker therefore posts as
+// that user and reads that user's chat, which is the point — the run measures
+// the server, not a conversation.
 package main
 
 import (
@@ -24,8 +29,6 @@ import (
 	"time"
 )
 
-var participants = [2]string{"Alice", "Bob"}
-
 type config struct {
 	addr       string
 	workers    int
@@ -33,6 +36,8 @@ type config struct {
 	rate       float64
 	writeRatio float64
 	timeout    time.Duration
+	// identity signs every request; the server rejects unsigned ones.
+	identity *identity
 }
 
 type workerStats struct {
@@ -55,6 +60,8 @@ func main() {
 	flag.Float64Var(&cfg.rate, "rate", 0, "total requests/sec across all workers (0 = unlimited, closed-loop)")
 	flag.Float64Var(&cfg.writeRatio, "write-ratio", 0.3, "fraction of requests that are POST sends (0-1)")
 	flag.DurationVar(&cfg.timeout, "timeout", 5*time.Second, "per-request timeout")
+	keyPath := flag.String("key", "loadtest.key", "file holding this tool's RSA private key")
+	username := flag.String("username", "loadtest", "username this tool posts under")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -69,6 +76,23 @@ func main() {
 			MaxIdleConnsPerHost: cfg.workers * 2,
 		},
 	}
+
+	id, err := loadIdentity(*keyPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "identity:", err)
+		os.Exit(1)
+	}
+	if err := checkAuthorized(client, cfg.addr, id); err != nil {
+		fmt.Fprintln(os.Stderr, "\n"+err.Error())
+		os.Exit(1)
+	}
+	// The server takes the sender from the key, so the key needs a name before
+	// a single POST will be accepted.
+	if err := ensureUsername(client, cfg.addr, id, *username); err != nil {
+		fmt.Fprintln(os.Stderr, "\n"+err.Error())
+		os.Exit(1)
+	}
+	cfg.identity = id
 
 	var ticker *time.Ticker
 	if cfg.rate > 0 {
@@ -126,7 +150,6 @@ func reportProgress(ctx context.Context, totalReqs *int64, start time.Time) {
 func runWorker(ctx context.Context, id int, cfg config, client *http.Client, ticker *time.Ticker, totalReqs *int64) *workerStats {
 	stats := newWorkerStats()
 	rng := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(id)))
-	sender := participants[id%2]
 	since := 0
 
 	for {
@@ -145,7 +168,7 @@ func runWorker(ctx context.Context, id int, cfg config, client *http.Client, tic
 
 		atomic.AddInt64(totalReqs, 1)
 		if rng.Float64() < cfg.writeRatio {
-			status, lat, err := doPost(ctx, client, cfg.addr, sender, rng)
+			status, lat, err := doPost(ctx, client, cfg, rng)
 			if err != nil {
 				stats.postErrors++
 				continue
@@ -153,7 +176,7 @@ func runWorker(ctx context.Context, id int, cfg config, client *http.Client, tic
 			stats.postLatencies = append(stats.postLatencies, lat)
 			stats.statusCounts[status]++
 		} else {
-			status, lat, maxID, err := doGet(ctx, client, cfg.addr, since)
+			status, lat, maxID, err := doGet(ctx, client, cfg, since)
 			if err != nil {
 				stats.getErrors++
 				continue
@@ -167,10 +190,13 @@ func runWorker(ctx context.Context, id int, cfg config, client *http.Client, tic
 	}
 }
 
-func doGet(ctx context.Context, client *http.Client, addr string, since int) (status int, latency time.Duration, maxID int, err error) {
-	url := fmt.Sprintf("%s/api/messages?since=%d", addr, since)
+func doGet(ctx context.Context, client *http.Client, cfg config, since int) (status int, latency time.Duration, maxID int, err error) {
+	url := fmt.Sprintf("%s/api/messages?since=%d", cfg.addr, since)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		return 0, 0, since, err
+	}
+	if err := cfg.identity.sign(req, nil); err != nil {
 		return 0, 0, since, err
 	}
 
@@ -201,16 +227,18 @@ func doGet(ctx context.Context, client *http.Client, addr string, since int) (st
 	return resp.StatusCode, latency, maxID, nil
 }
 
-func doPost(ctx context.Context, client *http.Client, addr, sender string, rng *rand.Rand) (status int, latency time.Duration, err error) {
+func doPost(ctx context.Context, client *http.Client, cfg config, rng *rand.Rand) (status int, latency time.Duration, err error) {
 	payload, _ := json.Marshal(map[string]string{
-		"sender": sender,
-		"text":   fmt.Sprintf("load test message %d", rng.Int()),
+		"text": fmt.Sprintf("load test message %d", rng.Int()),
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, addr+"/api/messages", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.addr+"/api/messages", bytes.NewReader(payload))
 	if err != nil {
 		return 0, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if err := cfg.identity.sign(req, payload); err != nil {
+		return 0, 0, err
+	}
 
 	start := time.Now()
 	resp, err := client.Do(req)

@@ -1,10 +1,23 @@
-// Command messageServer runs a tiny two-person chat: a JSON API backed by an
+// Command messageServer runs a small group chat: a JSON API backed by an
 // in-memory message log, plus a browser UI styled like the iPhone Messages app.
+//
+// An authorized client chooses a username for itself, searches the directory of
+// other named users, and adds them to its chat; a message is then delivered to
+// whoever is in the sender's chat when it is sent. See chat.go for those
+// handlers and directory.go for the tables behind them.
+//
+// Every API request must be signed by a client's RSA key and that key must
+// appear in the authorizedUsers table; see auth.go for the scheme and userdb.go
+// for the database. The connection string comes from DATABASE_URL in .env, and
+// the tables themselves come from the migrations in internal/database.
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -12,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"goMessageServer/internal/database"
 )
 
 // templateFS holds the browser UI, compiled into the binary so the server can
@@ -25,15 +40,39 @@ var templateFS embed.FS
 // Messages UI that polls the JSON API for new messages and posts new ones on send.
 var templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
-// Participants is the fixed pair allowed to chat. Keeping it to two names
-// (rather than open registration) matches the "two people" scope of this server.
-var Participants = [2]string{"Alice", "Bob"}
+// maxMessageLen bounds one message, which is also what bounds the body the
+// signing middleware has to buffer and hash.
+const maxMessageLen = 2000
 
+// Message is one line of chat. Sender is the username its author had when they
+// sent it, so a later rename does not rewrite the transcript.
 type Message struct {
 	ID        int       `json:"id"`
 	Sender    string    `json:"sender"`
 	Text      string    `json:"text"`
 	Timestamp time.Time `json:"timestamp"`
+
+	// senderKey and recipients are the delivery list: the public keys allowed
+	// to read this message. They are unexported, and so never marshalled — a
+	// client is told who wrote a message, not who else can see it.
+	senderKey  string
+	recipients []string
+}
+
+// visibleTo reports whether a public key may read this message. The recipients
+// were fixed when the message was sent, so joining a chat does not hand someone
+// the history from before they were in it, and leaving one does not erase what
+// they were already shown.
+func (m Message) visibleTo(publicKey string) bool {
+	if m.senderKey == publicKey {
+		return true
+	}
+	for _, key := range m.recipients {
+		if key == publicKey {
+			return true
+		}
+	}
+	return false
 }
 
 type ChatStore struct {
@@ -42,42 +81,134 @@ type ChatStore struct {
 	nextID   int
 }
 
-func (s *ChatStore) Add(sender, text string) Message {
+// Add records a message from senderKey (posting as sender) addressed to
+// recipients, the keys in that sender's chat.
+func (s *ChatStore) Add(senderKey, sender, text string, recipients []string) Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
-	msg := Message{ID: s.nextID, Sender: sender, Text: text, Timestamp: time.Now()}
+	msg := Message{
+		ID:         s.nextID,
+		Sender:     sender,
+		Text:       text,
+		Timestamp:  time.Now(),
+		senderKey:  senderKey,
+		recipients: recipients,
+	}
 	s.messages = append(s.messages, msg)
 	return msg
 }
 
-func (s *ChatStore) Since(id int) []Message {
+// Since returns the messages after id that viewerKey is allowed to read.
+func (s *ChatStore) Since(id int, viewerKey string) []Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]Message, 0)
 	for _, m := range s.messages {
-		if m.ID > id {
+		if m.ID > id && m.visibleTo(viewerKey) {
 			out = append(out, m)
 		}
 	}
 	return out
 }
 
-func isParticipant(name string) bool {
-	return name == Participants[0] || name == Participants[1]
-}
-
 func main() {
+	var (
+		addr      = flag.String("addr", ":8080", "address to listen on")
+		envFile   = flag.String("env", ".env", "file holding "+database.ConnectionStringVar)
+		authorize = flag.String("authorize", "", "add a base64 public key to authorizedUsers and exit")
+		pending   = flag.Bool("pending", false, "list the keys in unauthorizedUsers and exit")
+		strict    = flag.Bool("require-schema", false,
+			"fail instead of migrating if the schema is out of date (run ./migrate separately)")
+	)
+	flag.Parse()
+
+	connStr, err := database.ConnectionString(*envFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mode := ApplySchema
+	if *strict {
+		mode = RequireSchema
+	}
+
+	ctx := context.Background()
+	users, err := OpenUserStore(ctx, connStr, mode)
+	if err != nil {
+		log.Fatalf("authorization database: %v", err)
+	}
+	defer users.Close()
+
+	// Both administrative flags are one-shot: they touch the allow list and
+	// exit rather than starting a server.
+	if *authorize != "" {
+		if err := authorizeKey(ctx, users, *authorize); err != nil {
+			log.Fatalf("authorize: %v", err)
+		}
+		return
+	}
+	if *pending {
+		if err := printPending(ctx, users); err != nil {
+			log.Fatalf("pending: %v", err)
+		}
+		return
+	}
+
 	store := &ChatStore{}
+
+	// The API is signed and authorized; "/" is not, because it serves only the
+	// client shell, which has to load before it can generate a key to sign with.
+	// The shell carries no messages and no participant list.
+	api := http.NewServeMux()
+	api.HandleFunc("/api/messages", handleMessages(store, users))
+	api.HandleFunc("/api/identity", handleIdentity(users))
+	api.HandleFunc("/api/username", handleUsername(users))
+	api.HandleFunc("/api/users", handleUsers(users))
+	api.HandleFunc("/api/chat", handleChat(users))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
-	mux.HandleFunc("/api/participants", handleParticipants)
-	mux.HandleFunc("/api/messages", handleMessages(store))
+	mux.Handle("/api/", authenticate(users, api))
 
-	addr := ":8080"
-	log.Printf("messageServer listening on http://localhost%s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("messageServer listening on http://localhost%s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+// authorizeKey promotes a key an administrator has decided to trust. It accepts
+// the same base64 SPKI spelling the clients display and send.
+func authorizeKey(ctx context.Context, users *UserStore, encoded string) error {
+	cred, err := parseEncodedKey(encoded)
+	if err != nil {
+		return err
+	}
+	if err := users.Authorize(ctx, cred.PublicKey); err != nil {
+		return err
+	}
+	log.Printf("authorized key %s", cred.Fingerprint())
+	return nil
+}
+
+// printPending shows the keys that tried to connect and were turned away, so a
+// new client can be approved by copying one into -authorize.
+func printPending(ctx context.Context, users *UserStore) error {
+	keys, err := users.PendingKeys(ctx)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		fmt.Println("no keys waiting in unauthorizedUsers")
+		return nil
+	}
+	for _, key := range keys {
+		cred, err := parseEncodedKey(key)
+		if err != nil {
+			fmt.Printf("(unparseable)\t%s\n", key)
+			continue
+		}
+		fmt.Printf("%s\t%s\n", cred.Fingerprint(), key)
+	}
+	return nil
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -91,14 +222,19 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleParticipants(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, Participants)
-}
-
-// handleMessages serves GET /api/messages?since=<id>&user=<name> for polling
-// new messages, and POST /api/messages with a JSON body {sender, text} to send one.
-func handleMessages(store *ChatStore) http.HandlerFunc {
+// handleMessages serves GET /api/messages?since=<id> for polling the messages
+// the caller may read, and POST /api/messages with a JSON body {text} to send
+// one to everybody in the caller's chat.
+//
+// The sender is the caller's username, taken from the verified key rather than
+// from the body: a client can say what it likes, but it can only post as itself.
+func handleMessages(store *ChatStore, users *UserStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		cred, ok := caller(w, r)
+		if !ok {
+			return
+		}
+
 		switch r.Method {
 		case http.MethodGet:
 			since := 0
@@ -110,37 +246,48 @@ func handleMessages(store *ChatStore) http.HandlerFunc {
 				}
 				since = n
 			}
-			writeJSON(w, http.StatusOK, store.Since(since))
+			writeJSON(w, http.StatusOK, store.Since(since, cred.PublicKey))
 
 		case http.MethodPost:
 			var req struct {
-				Sender string `json:"sender"`
-				Text   string `json:"text"`
+				Text string `json:"text"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "invalid body", http.StatusBadRequest)
 				return
 			}
-			req.Sender = strings.TrimSpace(req.Sender)
 			req.Text = strings.TrimSpace(req.Text)
-			if !isParticipant(req.Sender) {
-				http.Error(w, "unknown sender", http.StatusBadRequest)
-				return
-			}
 			if req.Text == "" {
 				http.Error(w, "text is required", http.StatusBadRequest)
 				return
 			}
-			if len(req.Text) > 2000 {
+			if len(req.Text) > maxMessageLen {
 				http.Error(w, "text too long", http.StatusBadRequest)
 				return
 			}
-			msg := store.Add(req.Sender, req.Text)
+
+			sender, err := users.Username(r.Context(), cred.PublicKey)
+			if err != nil {
+				serverError(w, err)
+				return
+			}
+			// Without a name there is nothing to label the message with, and
+			// nobody could have added this key to their chat either.
+			if sender == "" {
+				http.Error(w, "choose a username before sending messages", http.StatusConflict)
+				return
+			}
+			recipients, err := users.ChatMemberKeys(r.Context(), cred.PublicKey)
+			if err != nil {
+				serverError(w, err)
+				return
+			}
+
+			msg := store.Add(cred.PublicKey, sender, req.Text, recipients)
 			writeJSON(w, http.StatusCreated, msg)
 
 		default:
-			w.Header().Set("Allow", "GET, POST")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			methodNotAllowed(w, "GET, POST")
 		}
 	}
 }
