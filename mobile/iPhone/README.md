@@ -39,9 +39,10 @@ Xcode 15 or later (iOS 17 deployment target, iPhone only).
    it generates this device's key, then shows "This device isn't authorized yet"
    until you approve it — see [Authorizing a device](#authorizing-a-device).
 
-3. Run a second client, either:
-   - another simulator (`Product ▸ Destination`, pick a different iPhone, run again), or
-   - a browser at <http://localhost:8080>.
+3. Run a second client, any of:
+   - another simulator (`Product ▸ Destination`, pick a different iPhone, run again),
+   - a browser at <http://localhost:8080>, or
+   - the React app at <http://localhost:8080/webapp> (see `webapp/README.md`).
 
 4. Give each client a username and put them in each other's chat — see
    [Usernames and people](#usernames-and-people).

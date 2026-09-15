@@ -1,5 +1,6 @@
 // Command messageServer runs a small group chat: a JSON API backed by an
-// in-memory message log, plus a browser UI styled like the iPhone Messages app.
+// in-memory message log, plus two browser clients styled like the iPhone
+// Messages app — a plain one at "/" and a React one at "/webapp".
 //
 // An authorized client chooses a username for itself, searches the directory of
 // other named users, and adds them to its chat; a message is then delivered to
@@ -157,9 +158,9 @@ func main() {
 
 	store := &ChatStore{}
 
-	// The API is signed and authorized; "/" is not, because it serves only the
-	// client shell, which has to load before it can generate a key to sign with.
-	// The shell carries no messages and no participant list.
+	// The API is signed and authorized; the two client shells are not, because
+	// each has to load before it can generate a key to sign with. Neither shell
+	// carries messages or names — everything they show comes from the API.
 	api := http.NewServeMux()
 	api.HandleFunc("/api/messages", handleMessages(store, users))
 	api.HandleFunc("/api/identity", handleIdentity(users))
@@ -169,6 +170,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
+	// One handler on both patterns: "/webapp" alone, and everything under it.
+	webapp := webappHandler()
+	mux.Handle(webappRoot, webapp)
+	mux.Handle(webappRoot+"/", webapp)
 	mux.Handle("/api/", authenticate(users, api))
 
 	log.Printf("messageServer listening on http://localhost%s", *addr)
