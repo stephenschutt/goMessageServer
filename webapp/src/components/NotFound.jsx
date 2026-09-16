@@ -14,7 +14,7 @@ export default function NotFound({ publicKey, onRetry, onNewKey }) {
         Give this key to whoever runs the server:
       </p>
       <textarea className="key" readOnly value={publicKey} />
-      <code>go run . -authorize &lsquo;&hellip;&rsquo;</code>
+      <code>go run ./cmd/messageServer -authorize &lsquo;&hellip;&rsquo;</code>
       <div className="row-inline center">
         <button type="button" className="primary" onClick={onRetry}>Check again</button>
         <button type="button" className="remove" onClick={onNewKey}>New key</button>

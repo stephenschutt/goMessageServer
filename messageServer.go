@@ -1,6 +1,6 @@
-// Command messageServer runs a small group chat: a JSON API backed by an
-// in-memory message log, plus two browser clients styled like the iPhone
-// Messages app — a plain one at "/" and a React one at "/webapp".
+// Package messageserver is a small group chat: a JSON API backed by a message
+// log in the database, plus two browser clients styled like the iPhone Messages
+// app — a plain one at "/" and a React one at "/webapp".
 //
 // An authorized client chooses a username for itself, searches the directory of
 // other named users, and adds them to its chat; a message is then delivered to
@@ -9,25 +9,22 @@
 //
 // Every API request must be signed by a client's RSA key and that key must
 // appear in the authorizedUsers table; see auth.go for the scheme and userdb.go
-// for the database. The connection string comes from DATABASE_URL in .env, and
-// the tables themselves come from the migrations in internal/database.
-package main
+// for the database, and messages.go for the transcript itself. The tables
+// themselves come from the migrations in internal/database.
+//
+// The command that wires this up and serves it is cmd/messageServer; the tests
+// are in tests/, which is why the handlers below are reachable through
+// NewHandler and NewAPIHandler rather than only from main.
+package messageserver
 
 import (
-	"context"
 	"embed"
 	"encoding/json"
-	"flag"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
-
-	"goMessageServer/internal/database"
 )
 
 // templateFS holds the browser UI, compiled into the binary so the server can
@@ -45,175 +42,35 @@ var templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 // signing middleware has to buffer and hash.
 const maxMessageLen = 2000
 
-// Message is one line of chat. Sender is the username its author had when they
-// sent it, so a later rename does not rewrite the transcript.
-type Message struct {
-	ID        int       `json:"id"`
-	Sender    string    `json:"sender"`
-	Text      string    `json:"text"`
-	Timestamp time.Time `json:"timestamp"`
-
-	// senderKey and recipients are the delivery list: the public keys allowed
-	// to read this message. They are unexported, and so never marshalled — a
-	// client is told who wrote a message, not who else can see it.
-	senderKey  string
-	recipients []string
+// NewHandler returns everything the server serves: the plain browser client at
+// "/", the React one under "/webapp", and the signed JSON API under "/api/".
+//
+// The API is authorized; the two client shells are not, because each has to
+// load before it can generate a key to sign with. Neither shell carries
+// messages or names — everything they show comes from the API.
+func NewHandler(users *UserStore, store *ChatStore) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handleIndex)
+	// One handler on both patterns: "/webapp" alone, and everything under it.
+	webapp := WebappHandler()
+	mux.Handle(webappRoot, webapp)
+	mux.Handle(webappRoot+"/", webapp)
+	mux.Handle("/api/", NewAPIHandler(users, store))
+	return mux
 }
 
-// visibleTo reports whether a public key may read this message. The recipients
-// were fixed when the message was sent, so joining a chat does not hand someone
-// the history from before they were in it, and leaving one does not erase what
-// they were already shown.
-func (m Message) visibleTo(publicKey string) bool {
-	if m.senderKey == publicKey {
-		return true
-	}
-	for _, key := range m.recipients {
-		if key == publicKey {
-			return true
-		}
-	}
-	return false
-}
-
-type ChatStore struct {
-	mu       sync.Mutex
-	messages []Message
-	nextID   int
-}
-
-// Add records a message from senderKey (posting as sender) addressed to
-// recipients, the keys in that sender's chat.
-func (s *ChatStore) Add(senderKey, sender, text string, recipients []string) Message {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nextID++
-	msg := Message{
-		ID:         s.nextID,
-		Sender:     sender,
-		Text:       text,
-		Timestamp:  time.Now(),
-		senderKey:  senderKey,
-		recipients: recipients,
-	}
-	s.messages = append(s.messages, msg)
-	return msg
-}
-
-// Since returns the messages after id that viewerKey is allowed to read.
-func (s *ChatStore) Since(id int, viewerKey string) []Message {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]Message, 0)
-	for _, m := range s.messages {
-		if m.ID > id && m.visibleTo(viewerKey) {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-func main() {
-	var (
-		addr      = flag.String("addr", ":8080", "address to listen on")
-		envFile   = flag.String("env", ".env", "file holding "+database.ConnectionStringVar)
-		authorize = flag.String("authorize", "", "add a base64 public key to authorizedUsers and exit")
-		pending   = flag.Bool("pending", false, "list the keys in unauthorizedUsers and exit")
-		strict    = flag.Bool("require-schema", false,
-			"fail instead of migrating if the schema is out of date (run ./migrate separately)")
-	)
-	flag.Parse()
-
-	connStr, err := database.ConnectionString(*envFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	mode := ApplySchema
-	if *strict {
-		mode = RequireSchema
-	}
-
-	ctx := context.Background()
-	users, err := OpenUserStore(ctx, connStr, mode)
-	if err != nil {
-		log.Fatalf("authorization database: %v", err)
-	}
-	defer users.Close()
-
-	// Both administrative flags are one-shot: they touch the allow list and
-	// exit rather than starting a server.
-	if *authorize != "" {
-		if err := authorizeKey(ctx, users, *authorize); err != nil {
-			log.Fatalf("authorize: %v", err)
-		}
-		return
-	}
-	if *pending {
-		if err := printPending(ctx, users); err != nil {
-			log.Fatalf("pending: %v", err)
-		}
-		return
-	}
-
-	store := &ChatStore{}
-
-	// The API is signed and authorized; the two client shells are not, because
-	// each has to load before it can generate a key to sign with. Neither shell
-	// carries messages or names — everything they show comes from the API.
+// NewAPIHandler returns the JSON API alone, already behind Authenticate. It is
+// separate from NewHandler so that a caller — the suite in tests/, or anything
+// mounting this API somewhere else — can exercise the API without the two
+// browser shells in front of it.
+func NewAPIHandler(users *UserStore, store *ChatStore) http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("/api/messages", handleMessages(store, users))
 	api.HandleFunc("/api/identity", handleIdentity(users))
 	api.HandleFunc("/api/username", handleUsername(users))
 	api.HandleFunc("/api/users", handleUsers(users))
 	api.HandleFunc("/api/chat", handleChat(users))
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleIndex)
-	// One handler on both patterns: "/webapp" alone, and everything under it.
-	webapp := webappHandler()
-	mux.Handle(webappRoot, webapp)
-	mux.Handle(webappRoot+"/", webapp)
-	mux.Handle("/api/", authenticate(users, api))
-
-	log.Printf("messageServer listening on http://localhost%s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
-}
-
-// authorizeKey promotes a key an administrator has decided to trust. It accepts
-// the same base64 SPKI spelling the clients display and send.
-func authorizeKey(ctx context.Context, users *UserStore, encoded string) error {
-	cred, err := parseEncodedKey(encoded)
-	if err != nil {
-		return err
-	}
-	if err := users.Authorize(ctx, cred.PublicKey); err != nil {
-		return err
-	}
-	log.Printf("authorized key %s", cred.Fingerprint())
-	return nil
-}
-
-// printPending shows the keys that tried to connect and were turned away, so a
-// new client can be approved by copying one into -authorize.
-func printPending(ctx context.Context, users *UserStore) error {
-	keys, err := users.PendingKeys(ctx)
-	if err != nil {
-		return err
-	}
-	if len(keys) == 0 {
-		fmt.Println("no keys waiting in unauthorizedUsers")
-		return nil
-	}
-	for _, key := range keys {
-		cred, err := parseEncodedKey(key)
-		if err != nil {
-			fmt.Printf("(unparseable)\t%s\n", key)
-			continue
-		}
-		fmt.Printf("%s\t%s\n", cred.Fingerprint(), key)
-	}
-	return nil
+	return Authenticate(users, api)
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +108,12 @@ func handleMessages(store *ChatStore, users *UserStore) http.HandlerFunc {
 				}
 				since = n
 			}
-			writeJSON(w, http.StatusOK, store.Since(since, cred.PublicKey))
+			messages, err := store.Since(r.Context(), since, cred.PublicKey)
+			if err != nil {
+				serverError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, messages)
 
 		case http.MethodPost:
 			var req struct {
@@ -288,7 +150,11 @@ func handleMessages(store *ChatStore, users *UserStore) http.HandlerFunc {
 				return
 			}
 
-			msg := store.Add(cred.PublicKey, sender, req.Text, recipients)
+			msg, err := store.Add(r.Context(), cred.PublicKey, sender, req.Text, recipients)
+			if err != nil {
+				serverError(w, err)
+				return
+			}
 			writeJSON(w, http.StatusCreated, msg)
 
 		default:

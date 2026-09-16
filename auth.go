@@ -6,7 +6,7 @@
 // request proves possession of the matching private key by signing a canonical
 // summary of itself. The server verifies that signature with the public key the
 // request presented, then asks the database whether that key is authorized.
-package main
+package messageserver
 
 import (
 	"bytes"
@@ -31,10 +31,10 @@ import (
 // Header names carrying the credential. They travel on every authenticated
 // request; there is no session or cookie, so nothing is left behind to steal.
 const (
-	headerPublicKey = "X-Public-Key"
-	headerTimestamp = "X-Timestamp"
-	headerNonce     = "X-Nonce"
-	headerSignature = "X-Signature"
+	HeaderPublicKey = "X-Public-Key"
+	HeaderTimestamp = "X-Timestamp"
+	HeaderNonce     = "X-Nonce"
+	HeaderSignature = "X-Signature"
 )
 
 // maxSkew bounds how stale a signed request may be. A signature is only valid
@@ -75,7 +75,7 @@ func withCredential(ctx context.Context, cred Credential) context.Context {
 	return context.WithValue(ctx, credentialKey{}, cred)
 }
 
-// credentialFrom returns the identity authenticate established for a request.
+// credentialFrom returns the identity Authenticate established for a request.
 // It is only absent if a handler is mounted outside the middleware.
 func credentialFrom(ctx context.Context) (Credential, bool) {
 	cred, ok := ctx.Value(credentialKey{}).(Credential)
@@ -130,17 +130,17 @@ var errUnsigned = errors.New("request is not signed")
 // that is not a usable RSA key. It does no signature checking; verifySignature
 // does that once the body has been read.
 func parseCredential(r *http.Request) (Credential, error) {
-	encoded := r.Header.Get(headerPublicKey)
+	encoded := r.Header.Get(HeaderPublicKey)
 	if encoded == "" {
 		return Credential{}, errUnsigned
 	}
-	return parseEncodedKey(encoded)
+	return ParseEncodedKey(encoded)
 }
 
-// parseEncodedKey validates one base64 DER SPKI RSA public key — the spelling
+// ParseEncodedKey validates one base64 DER SPKI RSA public key — the spelling
 // clients put on the wire and administrators paste into -authorize — and
 // returns it in the canonical form the database stores.
-func parseEncodedKey(encoded string) (Credential, error) {
+func ParseEncodedKey(encoded string) (Credential, error) {
 	der, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
 		return Credential{}, errors.New("public key is not base64")
@@ -163,10 +163,10 @@ func parseEncodedKey(encoded string) (Credential, error) {
 	return Credential{PublicKey: canonical, key: key}, nil
 }
 
-// signingString is the exact text a client signs and the server reconstructs.
+// SigningString is the exact text a client signs and the server reconstructs.
 // It pins the request's method, target and body, so a valid signature cannot be
 // lifted off one request and pasted onto another.
-func signingString(method, path, query, timestamp, nonce string, body []byte) string {
+func SigningString(method, path, query, timestamp, nonce string, body []byte) string {
 	sum := sha256.Sum256(body)
 	var b bytes.Buffer
 	for _, part := range []string{method, path, query, timestamp, nonce, hex.EncodeToString(sum[:])} {
@@ -179,9 +179,9 @@ func signingString(method, path, query, timestamp, nonce string, body []byte) st
 // verifySignature checks freshness, replay and the signature itself. body is
 // the request body the caller has already buffered.
 func verifySignature(cred Credential, r *http.Request, body []byte, nonces *nonceCache) error {
-	rawTimestamp := r.Header.Get(headerTimestamp)
-	nonce := r.Header.Get(headerNonce)
-	encodedSig := r.Header.Get(headerSignature)
+	rawTimestamp := r.Header.Get(HeaderTimestamp)
+	nonce := r.Header.Get(HeaderNonce)
+	encodedSig := r.Header.Get(HeaderSignature)
 	if rawTimestamp == "" || nonce == "" || encodedSig == "" {
 		return errUnsigned
 	}
@@ -202,7 +202,7 @@ func verifySignature(cred Credential, r *http.Request, body []byte, nonces *nonc
 	if err != nil {
 		return errors.New("signature is not base64")
 	}
-	signed := signingString(r.Method, r.URL.Path, r.URL.RawQuery, rawTimestamp, nonce, body)
+	signed := SigningString(r.Method, r.URL.Path, r.URL.RawQuery, rawTimestamp, nonce, body)
 	digest := sha256.Sum256([]byte(signed))
 	if err := rsa.VerifyPKCS1v15(cred.key, crypto.SHA256, digest[:], sig); err != nil {
 		return errors.New("signature does not match the public key")
@@ -210,11 +210,11 @@ func verifySignature(cred Credential, r *http.Request, body []byte, nonces *nonc
 	return nil
 }
 
-// authenticate wraps a handler so it only runs for a client that both proved
+// Authenticate wraps a handler so it only runs for a client that both proved
 // possession of its private key and appears in authorizedUsers. A caller whose
 // signature checks out but whose key is unknown is recorded in
 // unauthorizedUsers, which is how an administrator learns a key to approve.
-func authenticate(users *UserStore, next http.Handler) http.Handler {
+func Authenticate(users *UserStore, next http.Handler) http.Handler {
 	nonces := newNonceCache()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cred, err := parseCredential(r)
@@ -272,8 +272,8 @@ func unauthenticated(w http.ResponseWriter, err error) {
 	http.Error(w, "not authenticated: "+err.Error(), http.StatusUnauthorized)
 }
 
-// newNonce mints the per-request nonce that keeps a signature single-use.
-func newNonce() string {
+// NewNonce mints the per-request nonce that keeps a signature single-use.
+func NewNonce() string {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		// crypto/rand does not fail in practice; a chat server has nothing

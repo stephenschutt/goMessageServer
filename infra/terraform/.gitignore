@@ -1,0 +1,23 @@
+# State holds the generated database password in clear text.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.tfstate.lock.info
+crash.log
+
+# Your own settings, and anything that looks like a build artifact.
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Saved plan files. A plan holds a full copy of state — the generated database
+# password included — so it must never be committed, whatever it is called.
+# The patterns are broad on purpose: "tfplan-eks" slipped past *.tfplan once.
+*.tfplan
+*tfplan*
+*tf-plan*
+*.plan
+
+# A plan written into this directory with a .tf extension is also parsed as
+# configuration and breaks every command, including destroy. Keep plans out:
+#   terraform plan -out=/tmp/tf.plan

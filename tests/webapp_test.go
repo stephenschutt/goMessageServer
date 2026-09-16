@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"io/fs"
@@ -7,12 +7,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	messageserver "goMessageServer"
 )
 
 // The route a person types has to answer, and it has to answer with the app
 // rather than a directory listing.
 func TestWebappServesTheClient(t *testing.T) {
-	handler := webappHandler()
+	handler := messageserver.WebappHandler()
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/webapp", nil))
@@ -36,18 +38,18 @@ func TestWebappServesTheClient(t *testing.T) {
 // what catches a half-copied dist/.
 func TestWebappBundleIsEmbedded(t *testing.T) {
 	rec := httptest.NewRecorder()
-	webappHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/webapp/", nil))
+	messageserver.WebappHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/webapp/", nil))
 
 	script := regexp.MustCompile(`src=["']?/webapp/([^"' >]+)`).FindStringSubmatch(rec.Body.String())
 	if script == nil {
 		t.Fatalf("no bundle referenced by the page:\n%s", rec.Body.String())
 	}
-	if _, err := fs.Stat(webappFS, "webapp/dist/"+script[1]); err != nil {
+	if _, err := fs.Stat(messageserver.WebappFS, "webapp/dist/"+script[1]); err != nil {
 		t.Fatalf("page asks for %s, which is not embedded: %v", script[1], err)
 	}
 
 	asset := httptest.NewRecorder()
-	webappHandler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/webapp/"+script[1], nil))
+	messageserver.WebappHandler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/webapp/"+script[1], nil))
 	if asset.Code != http.StatusOK {
 		t.Fatalf("serving %s got %d, want 200", script[1], asset.Code)
 	}

@@ -1,12 +1,12 @@
 // The people half of the API: who the caller is, who else there is, and who is
 // in the caller's chat.
 //
-// Every handler here runs behind the authenticate middleware, so the caller's
+// Every handler here runs behind the Authenticate middleware, so the caller's
 // public key is already known and already authorized — that is the requirement
 // for setting a username at all. The key, not anything the client sends, is
 // what these handlers act on; a client can rename itself but it cannot act as
 // anybody else.
-package main
+package messageserver
 
 import (
 	"context"

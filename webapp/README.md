@@ -14,7 +14,7 @@ the key is authorized, and searches for other users to add to your chat.
 cd webapp
 npm install
 npm run build          # or: node cli.js build
-cd .. && go build -o messageServer .
+cd .. && go build -o messageServer ./cmd/messageServer
 ```
 
 The build writes `dist/`, which the server embeds with `go:embed` — so a change
@@ -46,8 +46,8 @@ not been told to trust, the app is not a page that exists. The 404 does show the
 public key, because otherwise nobody could ever be let in:
 
 ```sh
-go run . -authorize '<the key from the 404 page>'
-go run . -pending                # or read it off the server instead
+go run ./cmd/messageServer -authorize '<the key from the 404 page>'
+go run ./cmd/messageServer -pending    # or read it off the server instead
 ```
 
 **Check again** on that page re-tries without a reload; the app also recovers on

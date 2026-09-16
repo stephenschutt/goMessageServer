@@ -26,7 +26,17 @@ migration either takes effect and is remembered or does neither.
   case you type. Quoting a column in a migration but not in the query that
   reads it is the way to break this.
 - Stick to syntax both Postgres and SQLite accept, since `DATABASE_URL` selects
-  between them. `go test ./internal/database/` exercises the SQLite path.
+  between them. The suite in `tests/` exercises the SQLite path on every
+  `go test ./...`; the Postgres one is only exercised if you ask for it:
+
+  ```sh
+  TEST_POSTGRES_URL='postgres://postgres@127.0.0.1:5432/messages?sslmode=disable' \
+      go test -run Postgres ./tests/
+  ```
+
+  That matters more than it sounds. Auto-increment is the clearest example: the
+  two engines spell it incompatibly, which is why `"Messages"` takes its ids
+  from the `"messageSequence"` table in 0003 rather than from the column.
 - Prefer `IF NOT EXISTS`, so a migration can also be run by hand against a
   database that was set up before the runner existed.
 

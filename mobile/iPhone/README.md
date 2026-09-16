@@ -5,8 +5,8 @@ over the server's JSON API: each install names itself, adds the people it wants
 to talk to, and any number of installs pointed at the same server can then chat.
 
 There is no device-to-device channel: every message goes through the Go server's
-in-memory log, and each client polls `GET /api/messages?since=<id>` every 1.5s for
-anything newer than the highest id it has seen — the same protocol the browser UI
+message log in the database, and each client polls `GET /api/messages?since=<id>`
+every 1.5s for anything newer than the highest id it has seen — the same protocol the browser UI
 in `templates/index.html` uses. The two clients can therefore be any mix of apps
 and browsers.
 
@@ -27,7 +27,7 @@ Xcode 15 or later (iOS 17 deployment target, iPhone only).
    ```sh
    cp .env.example .env          # DATABASE_URL, SQLite by default
    go run ./migrate              # create the authorization tables
-   go run .                      # listens on :8080
+   go run ./cmd/messageServer    # listens on :8080
    ```
 
    `go run ./migrate -status` shows what has been applied. Running it is
@@ -84,14 +84,14 @@ client has to be approved once.
 2. Add it on the server:
 
    ```sh
-   go run . -authorize '<paste the key>'
+   go run ./cmd/messageServer -authorize '<paste the key>'
    ```
 
    Anything that tried and failed is already recorded, so you can skip the copy
    and read the key off the server instead:
 
    ```sh
-   go run . -pending
+   go run ./cmd/messageServer -pending
    ```
 
    which prints a short fingerprint and the full key for every device waiting in

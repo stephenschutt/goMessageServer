@@ -10,7 +10,7 @@
 // generate a key to sign with, and the shell carries no messages. Everything it
 // then asks for goes through the signed, authorized /api routes, and a key that
 // is not in authorizedUsers gets the app's 404 page.
-package main
+package messageserver
 
 import (
 	"embed"
@@ -20,21 +20,21 @@ import (
 	"strings"
 )
 
-// webappFS holds the built React client. The all: prefix keeps files webpack
+// WebappFS holds the built React client. The all: prefix keeps files webpack
 // writes with a leading dot or underscore, which the default patterns skip.
 //
 //go:embed all:webapp/dist
-var webappFS embed.FS
+var WebappFS embed.FS
 
 // webappRoot is where the app is mounted. It appears in three places that have
 // to agree: here, webpack's publicPath, and the URL a person types.
 const webappRoot = "/webapp"
 
-// webappHandler serves the built client, or explains itself if the build is
+// WebappHandler serves the built client, or explains itself if the build is
 // missing — which is what a checkout that has never run the webapp CLI looks
 // like.
-func webappHandler() http.Handler {
-	dist, err := fs.Sub(webappFS, "webapp/dist")
+func WebappHandler() http.Handler {
+	dist, err := fs.Sub(WebappFS, "webapp/dist")
 	if err != nil {
 		log.Printf("webapp: %v", err)
 		return notBuilt(err.Error())
@@ -76,7 +76,7 @@ func notBuilt(detail string) http.Handler {
 			"the webapp has not been built ("+detail+").\n"+
 				"Build it and rebuild the server:\n"+
 				"    cd webapp && npm install && npm run build\n"+
-				"    go build -o messageServer .\n",
+				"    go build -o messageServer ./cmd/messageServer\n",
 			http.StatusServiceUnavailable)
 	})
 }

@@ -1,0 +1,23 @@
+# Keep the build context small and the image reproducible. templates/ and
+# webapp/dist are NOT excluded: go:embed compiles both into the binary.
+.git
+.gitignore
+.env
+*.db
+
+# Infrastructure, tests and clients that are not part of the server build.
+infra
+tests
+mobile
+loadtest
+scratch
+webapp/node_modules
+webapp/src
+
+# Local build artifacts — the image builds its own.
+goMessageServer
+messageServer
+messageServer-linux-*
+test
+Dockerfile
+.dockerignore

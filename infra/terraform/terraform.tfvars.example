@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored; this file
+# is not, so keep secrets out of it — there are none to put here, since the
+# database password is generated and never typed.
+
+region  = "us-east-1"
+profile = ""          # or the name of an AWS CLI profile / SSO session
+
+# Who may reach the database and the server. Leave empty for "this machine's
+# current public IP", which is looked up when you plan.
+# allowed_cidrs = ["203.0.113.10/32"]
+
+# Also run the server on a free-tier EC2 instance. Build the binary first:
+#   cd ../.. && GOOS=linux GOARCH=amd64 go build -o messageServer-linux-amd64 ./cmd/messageServer
+# deploy_app      = true
+# app_binary_path = "../../messageServer-linux-amd64"
+
+# Run the server as three pods on EKS behind an ALB (REQ-008) instead of, or as
+# well as, the single EC2 instance above. Read the cost warning in the README
+# first: unlike everything else here, this is not free tier — budget roughly
+# $90-100 a month for the control plane, the nodes and the load balancer.
+# deploy_eks = true
+
+# Everything below is optional; these are the defaults.
+# eks_replicas           = 3
+# eks_node_instance_type = "t3.small"
+# eks_node_desired_count = 2
+# eks_version            = ""      # empty: whatever EKS currently defaults to
+
+# Build and push the image during apply. Needs docker running and a working
+# aws CLI. Set to false to run ./build-and-push.sh yourself.
+# build_image = true
+
+# Pin the load balancer controller's chart once an apply has worked, so the
+# next one is reproducible: helm search repo eks/aws-load-balancer-controller
+# alb_controller_chart_version = ""

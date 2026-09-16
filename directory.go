@@ -8,7 +8,7 @@
 //
 // Both tables are keyed by public key rather than by name, so renaming yourself
 // changes what people see and nothing else.
-package main
+package messageserver
 
 import (
 	"context"
@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	usernameTable = "userNames"
-	membersTable  = "chatMembers"
+	UsernameTable = "userNames"
+	MembersTable  = "chatMembers"
 )
 
 // Username length bounds. Long enough to be recognisable, short enough to fit
@@ -99,12 +99,12 @@ func (s *UserStore) SetUsername(ctx context.Context, publicKey, username string)
 	stmt := fmt.Sprintf(
 		`INSERT INTO %s (publicKey, username) VALUES (%s, %s)
 		 ON CONFLICT (publicKey) DO UPDATE SET username = excluded.username`,
-		database.Quote(usernameTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2))
+		database.Quote(UsernameTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2))
 	if _, err := s.db.ExecContext(ctx, stmt, publicKey, username); err != nil {
 		if isUniqueViolation(err) {
 			return ErrUsernameTaken
 		}
-		return fmt.Errorf("insert into %s: %w", usernameTable, err)
+		return fmt.Errorf("insert into %s: %w", UsernameTable, err)
 	}
 	return nil
 }
@@ -112,13 +112,13 @@ func (s *UserStore) SetUsername(ctx context.Context, publicKey, username string)
 // Username returns the name a key has chosen, or "" if it has not chosen one.
 func (s *UserStore) Username(ctx context.Context, publicKey string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT username FROM %s WHERE publicKey = %s`,
-		database.Quote(usernameTable), s.dialect.Placeholder(1))
+		database.Quote(UsernameTable), s.dialect.Placeholder(1))
 	var username string
 	switch err := s.db.QueryRowContext(ctx, stmt, publicKey).Scan(&username); {
 	case err == sql.ErrNoRows:
 		return "", nil
 	case err != nil:
-		return "", fmt.Errorf("query %s: %w", usernameTable, err)
+		return "", fmt.Errorf("query %s: %w", UsernameTable, err)
 	}
 	return username, nil
 }
@@ -127,13 +127,13 @@ func (s *UserStore) Username(ctx context.Context, publicKey string) (string, err
 // name is unclaimed. The match ignores case, the way the search does.
 func (s *UserStore) KeyForUsername(ctx context.Context, username string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT publicKey FROM %s WHERE lower(username) = lower(%s)`,
-		database.Quote(usernameTable), s.dialect.Placeholder(1))
+		database.Quote(UsernameTable), s.dialect.Placeholder(1))
 	var key string
 	switch err := s.db.QueryRowContext(ctx, stmt, username).Scan(&key); {
 	case err == sql.ErrNoRows:
 		return "", nil
 	case err != nil:
-		return "", fmt.Errorf("query %s: %w", usernameTable, err)
+		return "", fmt.Errorf("query %s: %w", UsernameTable, err)
 	}
 	return key, nil
 }
@@ -146,11 +146,11 @@ func (s *UserStore) SearchUsernames(ctx context.Context, query, excludeKey strin
 		`SELECT username FROM %s
 		 WHERE lower(username) LIKE %s ESCAPE '\' AND publicKey <> %s
 		 ORDER BY lower(username) LIMIT %d`,
-		database.Quote(usernameTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2), searchLimit)
+		database.Quote(UsernameTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2), searchLimit)
 
 	rows, err := s.db.QueryContext(ctx, stmt, "%"+likePattern(query)+"%", excludeKey)
 	if err != nil {
-		return nil, fmt.Errorf("query %s: %w", usernameTable, err)
+		return nil, fmt.Errorf("query %s: %w", UsernameTable, err)
 	}
 	defer rows.Close()
 	return scanStrings(rows)
@@ -174,9 +174,9 @@ func (s *UserStore) AddChatMember(ctx context.Context, ownerKey, memberKey strin
 		stmt := fmt.Sprintf(
 			`INSERT INTO %s (ownerKey, memberKey) VALUES (%s, %s)
 			 ON CONFLICT (ownerKey, memberKey) DO NOTHING`,
-			database.Quote(membersTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2))
+			database.Quote(MembersTable), s.dialect.Placeholder(1), s.dialect.Placeholder(2))
 		if _, err := s.db.ExecContext(ctx, stmt, pair[0], pair[1]); err != nil {
-			return fmt.Errorf("insert into %s: %w", membersTable, err)
+			return fmt.Errorf("insert into %s: %w", MembersTable, err)
 		}
 	}
 	return nil
@@ -188,11 +188,11 @@ func (s *UserStore) AddChatMember(ctx context.Context, ownerKey, memberKey strin
 func (s *UserStore) RemoveChatMember(ctx context.Context, ownerKey, memberKey string) error {
 	stmt := fmt.Sprintf(
 		`DELETE FROM %s WHERE (ownerKey = %s AND memberKey = %s) OR (ownerKey = %s AND memberKey = %s)`,
-		database.Quote(membersTable),
+		database.Quote(MembersTable),
 		s.dialect.Placeholder(1), s.dialect.Placeholder(2),
 		s.dialect.Placeholder(3), s.dialect.Placeholder(4))
 	if _, err := s.db.ExecContext(ctx, stmt, ownerKey, memberKey, memberKey, ownerKey); err != nil {
-		return fmt.Errorf("delete from %s: %w", membersTable, err)
+		return fmt.Errorf("delete from %s: %w", MembersTable, err)
 	}
 	return nil
 }
@@ -202,10 +202,10 @@ func (s *UserStore) ChatMembers(ctx context.Context, ownerKey string) ([]string,
 	stmt := fmt.Sprintf(
 		`SELECT u.username FROM %s m JOIN %s u ON u.publicKey = m.memberKey
 		 WHERE m.ownerKey = %s ORDER BY lower(u.username)`,
-		database.Quote(membersTable), database.Quote(usernameTable), s.dialect.Placeholder(1))
+		database.Quote(MembersTable), database.Quote(UsernameTable), s.dialect.Placeholder(1))
 	rows, err := s.db.QueryContext(ctx, stmt, ownerKey)
 	if err != nil {
-		return nil, fmt.Errorf("query %s: %w", membersTable, err)
+		return nil, fmt.Errorf("query %s: %w", MembersTable, err)
 	}
 	defer rows.Close()
 	return scanStrings(rows)
@@ -216,10 +216,10 @@ func (s *UserStore) ChatMembers(ctx context.Context, ownerKey string) ([]string,
 // if they have renamed themselves since.
 func (s *UserStore) ChatMemberKeys(ctx context.Context, ownerKey string) ([]string, error) {
 	stmt := fmt.Sprintf(`SELECT memberKey FROM %s WHERE ownerKey = %s`,
-		database.Quote(membersTable), s.dialect.Placeholder(1))
+		database.Quote(MembersTable), s.dialect.Placeholder(1))
 	rows, err := s.db.QueryContext(ctx, stmt, ownerKey)
 	if err != nil {
-		return nil, fmt.Errorf("query %s: %w", membersTable, err)
+		return nil, fmt.Errorf("query %s: %w", MembersTable, err)
 	}
 	defer rows.Close()
 	return scanStrings(rows)

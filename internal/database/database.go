@@ -90,19 +90,42 @@ func resolveDriver(connStr string) (driver, dsn string, err error) {
 	case strings.HasPrefix(trimmed, "postgres://"), strings.HasPrefix(trimmed, "postgresql://"):
 		return "postgres", trimmed, nil
 	case strings.HasPrefix(trimmed, "sqlite://"):
-		return "sqlite", strings.TrimPrefix(trimmed, "sqlite://"), nil
+		return "sqlite", sqliteDSN(strings.TrimPrefix(trimmed, "sqlite://")), nil
 	case strings.HasPrefix(trimmed, "sqlite:"):
-		return "sqlite", strings.TrimPrefix(trimmed, "sqlite:"), nil
+		return "sqlite", sqliteDSN(strings.TrimPrefix(trimmed, "sqlite:")), nil
 	case strings.HasPrefix(trimmed, "file:"):
-		return "sqlite", trimmed, nil
+		return "sqlite", sqliteDSN(trimmed), nil
 	case strings.Contains(trimmed, "://"):
 		scheme, _, _ := strings.Cut(trimmed, "://")
 		return "", "", fmt.Errorf("unsupported database scheme %q: use postgres:// or sqlite:", scheme)
 	default:
 		// A bare path, e.g. DATABASE_URL=./users.db
-		return "sqlite", trimmed, nil
+		return "sqlite", sqliteDSN(trimmed), nil
 	}
 }
+
+// sqliteDSN adds the two settings that make concurrent writers work.
+//
+// SQLite lets one connection write at a time, and by default a second one does
+// not wait its turn: it fails immediately with SQLITE_BUSY, which the caller
+// sees as "database is locked". That is fine for a single-threaded script and
+// wrong for an HTTP server, where two people sending a message at the same
+// moment is ordinary. busy_timeout makes the second writer wait instead, and
+// WAL lets readers carry on while it does.
+//
+// Postgres needs neither: it waits on a row lock by itself. Nothing here
+// changes which file is opened, so an existing DATABASE_URL keeps working.
+func sqliteDSN(path string) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + sqlitePragmas
+}
+
+// sqlitePragmas is the query string sqliteDSN appends. It is named so that the
+// test can assert on it without spelling it out a second time.
+const sqlitePragmas = "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
 
 // ConnectionStringVar is the environment variable holding the connection string.
 const ConnectionStringVar = "DATABASE_URL"

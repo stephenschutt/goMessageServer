@@ -1,15 +1,18 @@
-package database
+package tests
 
 import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"goMessageServer/internal/database"
 )
 
-func openTestDB(t *testing.T) (*sql.DB, Dialect) {
+func openMigrationTestDB(t *testing.T) (*sql.DB, database.Dialect) {
 	t.Helper()
-	db, dialect, err := Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
+	db, dialect, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -34,9 +37,9 @@ func tableExists(t *testing.T, db *sql.DB, name string) bool {
 }
 
 func TestMigrationsAreWellFormed(t *testing.T) {
-	migrations, err := Migrations()
+	migrations, err := database.Migrations()
 	if err != nil {
-		t.Fatalf("Migrations: %v", err)
+		t.Fatalf("database.Migrations: %v", err)
 	}
 	if len(migrations) == 0 {
 		t.Fatal("no migrations were embedded")
@@ -52,14 +55,14 @@ func TestMigrationsAreWellFormed(t *testing.T) {
 }
 
 func TestApplyCreatesBothTables(t *testing.T) {
-	db, dialect := openTestDB(t)
+	db, dialect := openMigrationTestDB(t)
 
-	applied, err := Apply(context.Background(), db, dialect)
+	applied, err := database.Apply(context.Background(), db, dialect)
 	if err != nil {
-		t.Fatalf("Apply: %v", err)
+		t.Fatalf("database.Apply: %v", err)
 	}
 	if len(applied) == 0 {
-		t.Fatal("Apply reported no migrations on an empty database")
+		t.Fatal("database.Apply reported no migrations on an empty database")
 	}
 
 	for _, table := range []string{"authorizedUsers", "unauthorizedUsers"} {
@@ -72,9 +75,9 @@ func TestApplyCreatesBothTables(t *testing.T) {
 // The tables must hold the public key and nothing else — the requirement is
 // that the allow list cannot become a user profile.
 func TestUserTablesHoldOnlyThePublicKey(t *testing.T) {
-	db, dialect := openTestDB(t)
-	if _, err := Apply(context.Background(), db, dialect); err != nil {
-		t.Fatalf("Apply: %v", err)
+	db, dialect := openMigrationTestDB(t)
+	if _, err := database.Apply(context.Background(), db, dialect); err != nil {
+		t.Fatalf("database.Apply: %v", err)
 	}
 
 	for _, table := range []string{"authorizedUsers", "unauthorizedUsers"} {
@@ -99,24 +102,24 @@ func TestUserTablesHoldOnlyThePublicKey(t *testing.T) {
 }
 
 func TestApplyIsIdempotent(t *testing.T) {
-	db, dialect := openTestDB(t)
+	db, dialect := openMigrationTestDB(t)
 	ctx := context.Background()
 
-	first, err := Apply(ctx, db, dialect)
+	first, err := database.Apply(ctx, db, dialect)
 	if err != nil {
-		t.Fatalf("first Apply: %v", err)
+		t.Fatalf("first database.Apply: %v", err)
 	}
-	second, err := Apply(ctx, db, dialect)
+	second, err := database.Apply(ctx, db, dialect)
 	if err != nil {
-		t.Fatalf("second Apply: %v", err)
+		t.Fatalf("second database.Apply: %v", err)
 	}
 	if len(second) != 0 {
-		t.Fatalf("second Apply re-ran %d migration(s)", len(second))
+		t.Fatalf("second database.Apply re-ran %d migration(s)", len(second))
 	}
 
-	applied, err := AppliedMigrations(ctx, db)
+	applied, err := database.AppliedMigrations(ctx, db)
 	if err != nil {
-		t.Fatalf("AppliedMigrations: %v", err)
+		t.Fatalf("database.AppliedMigrations: %v", err)
 	}
 	if len(applied) != len(first) {
 		t.Fatalf("recorded %d migrations, want %d", len(applied), len(first))
@@ -129,17 +132,17 @@ func TestApplyIsIdempotent(t *testing.T) {
 // Data must survive a re-run: a migration that dropped and recreated the tables
 // would silently revoke everyone's authorization.
 func TestApplyPreservesExistingRows(t *testing.T) {
-	db, dialect := openTestDB(t)
+	db, dialect := openMigrationTestDB(t)
 	ctx := context.Background()
 
-	if _, err := Apply(ctx, db, dialect); err != nil {
-		t.Fatalf("Apply: %v", err)
+	if _, err := database.Apply(ctx, db, dialect); err != nil {
+		t.Fatalf("database.Apply: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO "authorizedUsers" (publicKey) VALUES ('a-key')`); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	if _, err := Apply(ctx, db, dialect); err != nil {
-		t.Fatalf("re-Apply: %v", err)
+	if _, err := database.Apply(ctx, db, dialect); err != nil {
+		t.Fatalf("re-database.Apply: %v", err)
 	}
 
 	var key string
@@ -154,23 +157,23 @@ func TestApplyPreservesExistingRows(t *testing.T) {
 // A migration that fails must leave nothing behind — neither a half-built table
 // nor a row claiming it succeeded, which would make the runner skip it forever.
 func TestFailedMigrationIsNotRecorded(t *testing.T) {
-	db, dialect := openTestDB(t)
+	db, dialect := openMigrationTestDB(t)
 	ctx := context.Background()
 
-	if _, err := Apply(ctx, db, dialect); err != nil {
-		t.Fatalf("Apply: %v", err)
+	if _, err := database.Apply(ctx, db, dialect); err != nil {
+		t.Fatalf("database.Apply: %v", err)
 	}
 
-	broken := Migration{
+	broken := database.Migration{
 		Version: 999,
 		Name:    "broken",
 		SQL:     `CREATE TABLE "halfBuilt" (a TEXT); THIS IS NOT SQL;`,
 	}
-	if err := applyOne(ctx, db, dialect, broken); err == nil {
+	if err := database.ApplyOneForTest(ctx, db, dialect, broken); err == nil {
 		t.Fatal("expected the broken migration to fail")
 	}
 
-	applied, err := AppliedMigrations(ctx, db)
+	applied, err := database.AppliedMigrations(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,27 +188,27 @@ func TestFailedMigrationIsNotRecorded(t *testing.T) {
 }
 
 func TestPendingGoesEmptyAfterApply(t *testing.T) {
-	db, dialect := openTestDB(t)
+	db, dialect := openMigrationTestDB(t)
 	ctx := context.Background()
 
-	before, err := Pending(ctx, db)
+	before, err := database.Pending(ctx, db)
 	if err != nil {
-		t.Fatalf("Pending: %v", err)
+		t.Fatalf("database.Pending: %v", err)
 	}
 	if len(before) == 0 {
 		t.Fatal("nothing pending on an empty database")
 	}
 
-	if _, err := Apply(ctx, db, dialect); err != nil {
-		t.Fatalf("Apply: %v", err)
+	if _, err := database.Apply(ctx, db, dialect); err != nil {
+		t.Fatalf("database.Apply: %v", err)
 	}
 
-	after, err := Pending(ctx, db)
+	after, err := database.Pending(ctx, db)
 	if err != nil {
-		t.Fatalf("Pending: %v", err)
+		t.Fatalf("database.Pending: %v", err)
 	}
 	if len(after) != 0 {
-		t.Fatalf("%d still pending after Apply", len(after))
+		t.Fatalf("%d still pending after database.Apply", len(after))
 	}
 }
 
@@ -223,7 +226,7 @@ func TestParseMigrationName(t *testing.T) {
 		{filename: "nounderscore.sql", wantErr: true},
 	}
 	for _, tc := range cases {
-		version, name, err := parseMigrationName(tc.filename)
+		version, name, err := database.ParseMigrationNameForTest(tc.filename)
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("%s: expected an error", tc.filename)
@@ -249,14 +252,17 @@ func TestResolveDriver(t *testing.T) {
 	}{
 		{connStr: "postgres://u:p@h/db", driver: "postgres", dsn: "postgres://u:p@h/db"},
 		{connStr: "postgresql://u@h/db", driver: "postgres", dsn: "postgresql://u@h/db"},
-		{connStr: "sqlite:./users.db", driver: "sqlite", dsn: "./users.db"},
-		{connStr: "sqlite:///tmp/users.db", driver: "sqlite", dsn: "/tmp/users.db"},
-		{connStr: "./users.db", driver: "sqlite", dsn: "./users.db"},
+		// The database.SQLite cases name a file; database.ResolveDriverForTest appends the concurrency
+		// pragmas to it, which the path assertion below checks separately.
+		{connStr: "sqlite:./users.db", driver: "sqlite", dsn: "./users.db?" + database.SQLitePragmasForTest},
+		{connStr: "sqlite:///tmp/users.db", driver: "sqlite", dsn: "/tmp/users.db?" + database.SQLitePragmasForTest},
+		{connStr: "./users.db", driver: "sqlite", dsn: "./users.db?" + database.SQLitePragmasForTest},
+		{connStr: "file:users.db?mode=ro", driver: "sqlite", dsn: "file:users.db?mode=ro&" + database.SQLitePragmasForTest},
 		{connStr: "", wantErr: true},
 		{connStr: "mysql://u@h/db", wantErr: true},
 	}
 	for _, tc := range cases {
-		driver, dsn, err := resolveDriver(tc.connStr)
+		driver, dsn, err := database.ResolveDriverForTest(tc.connStr)
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("%q: expected an error", tc.connStr)
@@ -270,5 +276,29 @@ func TestResolveDriver(t *testing.T) {
 		if driver != tc.driver || dsn != tc.dsn {
 			t.Errorf("%q: got (%q, %q), want (%q, %q)", tc.connStr, driver, dsn, tc.driver, tc.dsn)
 		}
+	}
+}
+
+// The pragmas are what let a second writer wait rather than fail, so a DSN that
+// quietly lost them would show up as "database is locked" under load rather
+// than as a broken test. database.Postgres must not be given them: it is not a DSN it
+// would understand.
+func TestSQLiteDSNCarriesConcurrencyPragmasAndPostgresDoesNot(t *testing.T) {
+	_, dsn, err := database.ResolveDriverForTest("./users.db")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	for _, want := range []string{"busy_timeout(10000)", "journal_mode(WAL)"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("sqlite dsn %q is missing %s", dsn, want)
+		}
+	}
+
+	_, pg, err := database.ResolveDriverForTest("postgres://u:p@h/db")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if pg != "postgres://u:p@h/db" {
+		t.Errorf("postgres dsn was rewritten to %q", pg)
 	}
 }

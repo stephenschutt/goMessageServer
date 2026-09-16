@@ -1,78 +1,17 @@
-package main
+package tests
 
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
-	"strconv"
 	"testing"
-	"time"
+
+	messageserver "goMessageServer"
 )
 
 // testClient is the client half of the signing scheme, mirroring what
-// ChatClient.swift and templates/index.html do.
-type testClient struct {
-	key       *rsa.PrivateKey
-	publicKey string
-}
-
-func newTestClient(t *testing.T) *testClient {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal public key: %v", err)
-	}
-	return &testClient{key: key, publicKey: base64.StdEncoding.EncodeToString(der)}
-}
-
-func (c *testClient) request(t *testing.T, method, target string, body []byte) *http.Request {
-	t.Helper()
-	req := httptest.NewRequest(method, target, bytes.NewReader(body))
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := newNonce()
-
-	signed := signingString(method, req.URL.Path, req.URL.RawQuery, timestamp, nonce, body)
-	digest := sha256.Sum256([]byte(signed))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, c.key, crypto.SHA256, digest[:])
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-
-	req.Header.Set(headerPublicKey, c.publicKey)
-	req.Header.Set(headerTimestamp, timestamp)
-	req.Header.Set(headerNonce, nonce)
-	req.Header.Set(headerSignature, base64.StdEncoding.EncodeToString(sig))
-	return req
-}
-
-func newTestStore(t *testing.T) *UserStore {
-	t.Helper()
-	store, err := OpenUserStore(context.Background(), filepath.Join(t.TempDir(), "users.db"), ApplySchema)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-	return store
-}
-
-func newTestHandler(users *UserStore) http.Handler {
-	return authenticate(users, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-}
 
 func TestUnsignedRequestIsRejected(t *testing.T) {
 	handler := newTestHandler(newTestStore(t))
@@ -131,7 +70,7 @@ func TestStolenPublicKeyIsRejected(t *testing.T) {
 
 	attacker := newTestClient(t)
 	req := attacker.request(t, http.MethodGet, "/api/messages?since=0", nil)
-	req.Header.Set(headerPublicKey, victim.publicKey) // signature is still the attacker's
+	req.Header.Set(messageserver.HeaderPublicKey, victim.publicKey) // signature is still the attacker's
 
 	rec := httptest.NewRecorder()
 	newTestHandler(users).ServeHTTP(rec, req)

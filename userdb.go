@@ -8,7 +8,7 @@
 //
 // Both tables are defined by the migrations in internal/database, which is also
 // what `go run ./migrate` applies.
-package main
+package messageserver
 
 import (
 	"context"
@@ -22,8 +22,8 @@ import (
 // Table names, quoted in every statement so the camel case survives Postgres,
 // which folds unquoted identifiers to lower case.
 const (
-	authorizedTable   = "authorizedUsers"
-	unauthorizedTable = "unauthorizedUsers"
+	AuthorizedTable   = "authorizedUsers"
+	UnauthorizedTable = "unauthorizedUsers"
 )
 
 // SchemaMode says what OpenUserStore should do about a database whose schema is
@@ -87,14 +87,14 @@ func prepareSchema(ctx context.Context, db *sql.DB, dialect database.Dialect, mo
 // IsAuthorized reports whether a public key appears in authorizedUsers.
 func (s *UserStore) IsAuthorized(ctx context.Context, publicKey string) (bool, error) {
 	stmt := fmt.Sprintf(`SELECT 1 FROM %s WHERE publicKey = %s`,
-		database.Quote(authorizedTable), s.dialect.Placeholder(1))
+		database.Quote(AuthorizedTable), s.dialect.Placeholder(1))
 	var found int
 	err := s.db.QueryRowContext(ctx, stmt, publicKey).Scan(&found)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
 	case err != nil:
-		return false, fmt.Errorf("query %s: %w", authorizedTable, err)
+		return false, fmt.Errorf("query %s: %w", AuthorizedTable, err)
 	}
 	return true, nil
 }
@@ -102,29 +102,29 @@ func (s *UserStore) IsAuthorized(ctx context.Context, publicKey string) (bool, e
 // RecordUnauthorized files a rejected public key for an administrator to review.
 // Repeat attempts by the same key collapse onto the one row.
 func (s *UserStore) RecordUnauthorized(ctx context.Context, publicKey string) error {
-	return s.insertIgnore(ctx, unauthorizedTable, publicKey)
+	return s.insertIgnore(ctx, UnauthorizedTable, publicKey)
 }
 
 // Authorize adds a public key to the allow list and drops any record of it from
 // the rejected table, which is how a key graduates from one to the other.
 func (s *UserStore) Authorize(ctx context.Context, publicKey string) error {
-	if err := s.insertIgnore(ctx, authorizedTable, publicKey); err != nil {
+	if err := s.insertIgnore(ctx, AuthorizedTable, publicKey); err != nil {
 		return err
 	}
 	stmt := fmt.Sprintf(`DELETE FROM %s WHERE publicKey = %s`,
-		database.Quote(unauthorizedTable), s.dialect.Placeholder(1))
+		database.Quote(UnauthorizedTable), s.dialect.Placeholder(1))
 	if _, err := s.db.ExecContext(ctx, stmt, publicKey); err != nil {
-		return fmt.Errorf("clear %s: %w", unauthorizedTable, err)
+		return fmt.Errorf("clear %s: %w", UnauthorizedTable, err)
 	}
 	return nil
 }
 
 // PendingKeys lists the public keys waiting in unauthorizedUsers.
 func (s *UserStore) PendingKeys(ctx context.Context) ([]string, error) {
-	stmt := fmt.Sprintf(`SELECT publicKey FROM %s ORDER BY publicKey`, database.Quote(unauthorizedTable))
+	stmt := fmt.Sprintf(`SELECT publicKey FROM %s ORDER BY publicKey`, database.Quote(UnauthorizedTable))
 	rows, err := s.db.QueryContext(ctx, stmt)
 	if err != nil {
-		return nil, fmt.Errorf("query %s: %w", unauthorizedTable, err)
+		return nil, fmt.Errorf("query %s: %w", UnauthorizedTable, err)
 	}
 	defer rows.Close()
 
@@ -148,5 +148,11 @@ func (s *UserStore) insertIgnore(ctx context.Context, table, publicKey string) e
 	}
 	return nil
 }
+
+// DB exposes the connection underneath, which is what the suite in tests/ uses
+// to clear tables between runs against a shared Postgres. Everything the server
+// itself needs is a method on this type; reach for this only when raw SQL is
+// genuinely the point.
+func (s *UserStore) DB() *sql.DB { return s.db }
 
 func (s *UserStore) Close() error { return s.db.Close() }

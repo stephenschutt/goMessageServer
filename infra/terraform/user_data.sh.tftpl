@@ -1,0 +1,55 @@
+#!/bin/bash
+# Boot script for the messageServer instance, rendered by Terraform.
+#
+# Bash variables are written without braces on purpose: braces mean Terraform
+# interpolation in this file, so plain $NAME keeps the two apart.
+set -euo pipefail
+exec > >(tee /var/log/messageserver-setup.log) 2>&1
+
+echo "deploying release ${release}"
+
+install -d -m 0755 /opt/messageserver
+aws s3 cp "s3://${bucket}/${key}" /opt/messageserver/messageServer --region "${region}"
+chmod 0755 /opt/messageserver/messageServer
+
+# The connection string is fetched at boot rather than baked into this script,
+# which is readable from the instance metadata service by anything on the box.
+DATABASE_URL=$(aws ssm get-parameter \
+  --name "${parameter}" \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text \
+  --region "${region}")
+
+umask 077
+cat > /etc/messageserver.env <<ENV
+DATABASE_URL=$DATABASE_URL
+ENV
+umask 022
+
+id -u messageserver >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin messageserver
+chown messageserver:messageserver /etc/messageserver.env
+
+cat > /etc/systemd/system/messageserver.service <<UNIT
+[Unit]
+Description=messageServer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=messageserver
+ExecStart=/opt/messageserver/messageServer -addr :${port} -env /etc/messageserver.env
+Restart=always
+RestartSec=5
+# The server only reads its own binary and talks to the database.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now messageserver.service

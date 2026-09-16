@@ -24,7 +24,7 @@ Usage:
   node cli.js help            this message
 
 The Go server embeds dist/ at compile time, so after a build rebuild the
-server too: go build -o messageServer .`;
+server too: go build -o messageServer ./cmd/messageServer`;
 
 function main(argv) {
   const command = argv[0] || 'help';
@@ -98,7 +98,7 @@ function summarize(mode) {
     const { size } = fs.statSync(path.join(dist, name));
     console.log(`  ${name.padEnd(28)} ${(size / 1024).toFixed(1)} KiB`);
   }
-  console.log('\nthe server embeds dist/, so rebuild it to serve this:\n  go build -o messageServer .');
+  console.log('\nthe server embeds dist/, so rebuild it to serve this:\n  go build -o messageServer ./cmd/messageServer');
 }
 
 process.exitCode = main(process.argv.slice(2)) || process.exitCode || 0;

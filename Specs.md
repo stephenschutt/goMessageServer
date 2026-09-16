@@ -4,3 +4,7 @@ REQ-003 - add authentication in messageServer.go.  Make each client create an rs
 REQ-004 - can you create a migration script to create the authorizedUsers and unauthorizedUsers tables?
 REQ-005 - add a section of the iOS app that allows a user to set their own username (text) once they are in the authorizedUsers table and can access the api.  Then add a search section so they can search for and add other users to their chat too
 REQ-006 - Add a react web app that is served up by the go server, that is shown when you type "http://localhost:8080/webapp".  It should use webpack to produce a minified version and should have a cli inside of it that will produce the webapp version.  It should create a public/private key and save it in the local storage and display a friendly 404 error unless the public key is in the authorizedKeys table and is added to each api request.  Make it function the same as the iOS app too (look at REQ-003 & REQ-005 and the current code for this)
+REQ-007 - add an /infra/terraform directory.  In that directory, create a terraform script to create a free-tier postgres compatible database that I can use to connect to my personal aws console through terraform and deploy all of my code
+REQ-008 - add an EKS cluster to the terraform infra script that has 3 pods.  The pods should each have an instance of go on them that runs the goMessageServer and should be load balanced behind an ALB
+REQ-009 - move the ChatStore to the database and create a table "Messages" for it
+REQ-010 - migrate all tests to the tests folder 

@@ -1,20 +1,17 @@
 # messageServer.go — fixes
 
 ## Architecture
-- [ ] Fix the repo root package: `SophiaTest.go` and `test.go` both declare
-      `func main()` in the same `package main` as `messageServer.go`, so
-      `go build ./...` / `go vet ./...` currently fail with "main
-      redeclared in this block". Move or delete these — they're unrelated
-      scratch files, not part of the chat server.
+- [x] ~~Fix the repo root package: two files declaring `func main()`~~ —
+      gone. REQ-010 went further: the root is now the importable library
+      `messageserver`, the command lives in `cmd/messageServer/`, and the
+      whole suite is in `tests/`.
 - [ ] Add a `.gitignore` for the compiled binaries sitting in the repo
       root (`messageServer`, `SophiaTest`, `test`) so build output doesn't
       get committed.
-- [ ] Split `messageServer.go` (457 lines) by responsibility instead of
-      one file doing wiring + data model + handlers + embedded frontend:
-      - `messageServer.go` — just `main()`: build store, mux, `*http.Server`.
-      - `store.go` — `Message`, `ChatStore`, `Add`/`Since`.
-      - `handlers.go` — `handleIndex`, `handleParticipants`,
-        `handleMessages`, `writeJSON`.
+- [x] ~~Split `messageServer.go` by responsibility~~ — done across
+      `auth.go`, `chat.go`, `directory.go`, `messages.go`, `userdb.go`,
+      `webapp.go`, with `messageServer.go` left holding `NewHandler` and the
+      message routes.
 - [ ] Move the embedded `indexHTML` string (messageServer.go:141-457, ~2/3
       of the file) out into real `web/index.html` + `web/style.css` +
       `web/app.js` files served via `go:embed` — gets syntax
@@ -44,15 +41,17 @@
       hardcoded `":8080"` (messageServer.go:65).
 
 ## Worth considering
-- [ ] Bound `ChatStore.messages` growth (e.g. cap history length or add
-      eviction) — currently grows forever for the life of the process
-      (messageServer.go:28).
-- [ ] Switch `ChatStore.mu` from `sync.Mutex` to `sync.RWMutex` so
-      concurrent `Since` reads (polled every 1.5s per client) don't block
-      each other (messageServer.go:27, :41).
-- [ ] `Since` does a full linear scan of all messages on every poll
-      (messageServer.go:41-51) — fine at toy scale, revisit if history
-      grows large.
+- [x] ~~Switch `ChatStore.mu` from `sync.Mutex` to `sync.RWMutex`~~ — moot:
+      REQ-009 moved the log into the database (`messages.go`), so there is
+      no mutex left. Concurrency is the connection pool's problem now.
+- [x] ~~`Since` does a full linear scan of all messages on every poll~~ —
+      it is an indexed query against `"Messages"` and `"messageRecipients"`,
+      capped at `maxMessageBatch` rows per poll.
+- [ ] Bound the growth of `"Messages"`. The old slice grew for the life of a
+      process and was emptied by a restart; the table grows for the life of
+      the database and is not. Wants a retention policy — delete rows past
+      some age, or past some count per conversation — plus the matching
+      cleanup of `"messageRecipients"`.
 - [ ] No real authentication — any client can POST as "Alice" or "Bob" by
       naming them in the request body; `isParticipant` only checks the
       name matches, it doesn't bind identity to a session
