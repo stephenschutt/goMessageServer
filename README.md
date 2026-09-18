@@ -1,4 +1,4 @@
-# infra/terraform
+# goMessageServer — infrastructure
 
 Terraform for a free-tier PostgreSQL database on AWS — the one `DATABASE_URL`
 in `.env` points at — and, optionally, a free-tier EC2 instance running the
@@ -49,7 +49,7 @@ Put that in `.env` at the repo root as `DATABASE_URL=...`, then create the
 tables and start the server:
 
 ```sh
-cd ../..
+cd ../..                # back to the repository root
 go run ./migrate        # optional: the server applies pending migrations itself
 go run ./cmd/messageServer
 ```
@@ -68,7 +68,7 @@ React app are compiled into it — so deploying it is: build for Linux, upload,
 run. Build the webapp first if you have changed it.
 
 ```sh
-cd ../..
+# from the repository root
 (cd webapp && npm install && npm run build)
 GOOS=linux GOARCH=amd64 go build -o messageServer-linux-amd64 ./cmd/messageServer
 
@@ -144,6 +144,54 @@ and runs `eks_replicas` (default 3) copies of it on a managed node group, load
 balanced by an Application Load Balancer. It is independent of `deploy_app`:
 that one is the single-EC2-instance route, and you do not need both.
 
+### Redeploying from scratch
+
+After a `terraform destroy`, the whole thing comes back with this. No `-var`
+flags: `deploy_eks` and `domain_name` live in `infra/terraform/terraform.tfvars`.
+
+```sh
+cd infra/terraform
+
+# 1. Request the certificate (returns in seconds)
+terraform apply -target=aws_acm_certificate.app
+terraform output acm_validation_record
+
+# 2. Update the validation CNAME at the registrar — a rebuild gets a NEW
+#    value, so the previous record is dead and must be replaced, not reused.
+
+# 3. Build everything (~25 minutes; step 4 blocks until step 2 is visible)
+terraform apply
+terraform output dns_target
+
+# 4. Update the app's CNAME at the registrar — the new ALB has a NEW hostname.
+
+# 5. Connect, and re-authorize each client
+$(terraform output -raw kubeconfig_command)
+pod=$(kubectl -n messageserver get po -l app.kubernetes.io/name=messageserver -o name | head -1)
+kubectl -n messageserver exec "$pod" -- messageServer -pending
+kubectl -n messageserver exec "$pod" -- messageServer -authorize '<key>'
+```
+
+Three things a rebuild does not preserve, all for the same reason — they were
+destroyed, not stopped:
+
+- **The database is empty.** `skip_final_snapshot` means no snapshot to restore,
+  so every authorized key, username and message is gone. `pg_dump` before a
+  destroy if you want any of it.
+- **Both DNS records change.** New certificate, new validation value; new load
+  balancer, new hostname.
+- **The database password changes.** `random_password` regenerates, so a saved
+  client such as DBeaver will fail to authenticate until you re-read
+  `terraform output -raw database_url`.
+
+Skip steps 1, 2 and 4 by commenting out `domain_name`, which falls back to the
+self-signed certificate: `terraform apply` then does the whole job, at the cost
+of a browser warning.
+
+To redeploy only a **code change** with the cluster already up, `terraform apply`
+is the whole thing — the image tag is a hash of the server's sources, so a
+changed file is a new tag, a new image and a rolling update.
+
 ### Before you start
 
 On top of Terraform and the AWS CLI:
@@ -159,10 +207,11 @@ Build the React app first if you have changed it; it is compiled into the
 binary, which is compiled into the image.
 
 ```sh
-(cd ../../webapp && npm install && npm run build)
+# from the repository root
+(cd webapp && npm install && npm run build)
 
 cd infra/terraform
-terraform apply -var deploy_eks=true
+terraform apply
 ```
 
 One apply does the whole thing, in this order: cluster, node group, add-ons,
@@ -238,9 +287,82 @@ Three smaller notes on how it is wired:
   are restricted to `allowed_cidrs`, which defaults to this machine's current
   public address — the same default as the database. Set `allowed_cidrs`, or
   `eks_public_access_cidrs` for just the API, to something stable if you move
-  around. The ALB is plain HTTP, so the React client's WebCrypto signing will
-  refuse to run on it in a browser for the same secure-context reason as the
-  EC2 route.
+  around.
+
+### HTTPS
+
+`alb_https` is on by default, and nothing is served over plain HTTP: port 80
+exists only to answer with a 301 to 443, and `alb_http_redirect = false` closes
+it altogether.
+
+This is not decoration. Both browser clients sign every API request with
+WebCrypto, and `crypto.subtle` is undefined outside a *secure context* — which
+plain HTTP is not. Over HTTP the clients load and then fail at the first signed
+request. HTTPS is what makes them work.
+
+The certificate is the awkward part. A certificate authority will only issue for
+a domain you control, and `k8s-…elb.amazonaws.com` is not one. So there are two
+modes:
+
+| `alb_certificate_arn` | What happens |
+| --- | --- |
+| *empty* (default) | A self-signed certificate is generated in `infra/terraform/tls.tf` and imported into ACM. Encryption is real, trust is not: every browser interrupts with a warning you have to click through. WebCrypto works afterwards — a bypassed certificate error still leaves an `https://` origin, which is a secure context. |
+| an ACM ARN | That certificate is used and browsers stay quiet. This is the real answer, and it needs a domain. |
+
+#### Using your own domain
+
+Set `domain_name` and Terraform requests the certificate; publishing the two DNS
+records is yours to do, because the zone is at a registrar Terraform has no
+credentials for. Route 53 could be automated, an external registrar cannot.
+
+```sh
+# 1. Request the certificate. -target keeps this to the one resource, so the
+#    apply returns immediately instead of waiting on a record you cannot add yet.
+terraform apply -target=aws_acm_certificate.app
+
+# 2. Read the record ACM wants.
+terraform output acm_validation_record
+terraform output dns_target
+```
+
+Add both at the registrar, as CNAMEs:
+
+| Host | Value | Why |
+| --- | --- | --- |
+| the `namecheap_host` from `acm_validation_record` | its `value` | proves the domain is yours, and must stay: ACM re-checks it at renewal |
+| the first label of `domain_name` | `dns_target` | sends traffic to the load balancer |
+
+```sh
+# 3. Finish. aws_acm_certificate_validation waits for ACM to see the record,
+#    then the listener swaps the self-signed certificate for the real one.
+terraform apply
+```
+
+If step 3 sits there, the validation record is missing or wrong:
+
+```sh
+dig +short CNAME <the name from acm_validation_record>
+```
+
+Certificates must live in the same region as the load balancer, which for this
+configuration means `us-east-1`.
+
+Already have a certificate in ACM? Skip all of the above and set
+`alb_certificate_arn` to its ARN.
+
+`terraform output alb_certificate` says which of the two you are on.
+
+To avoid the warning entirely without a domain, skip the ALB and tunnel to a
+pod — `localhost` is a secure context by definition:
+
+```sh
+kubectl -n messageserver port-forward deploy/messageserver 8080:8080
+# http://localhost:8080/webapp
+```
+
+The listener accepts TLS 1.2 and 1.3 only (`alb_ssl_policy`). TLS terminates at
+the load balancer; the hop from there to a pod stays HTTP, inside the VPC and
+inside the cluster security group.
 
 ### EKS variables
 
@@ -252,11 +374,16 @@ Three smaller notes on how it is wired:
 | `eks_node_desired_count` | `2` | more room to spread replicas |
 | `eks_version` | *EKS default* | pin a Kubernetes minor version |
 | `eks_public_access_cidrs` | *`allowed_cidrs`* | apply from CI as well as a laptop |
-| `build_image` | `true` | push by hand with `./build-and-push.sh` |
+| `build_image` | `true` | push by hand with `infra/terraform/build-and-push.sh` |
 | `app_image` | `""` | run an image from somewhere else entirely |
 | `app_image_tag` | *source hash* | pin a tag instead |
 | `alb_controller_chart_version` | *latest* | pin it once an apply has worked |
 | `kubernetes_namespace` | `messageserver` | |
+| `alb_https` | `true` | turn TLS off entirely |
+| `alb_certificate_arn` | *self-signed* | a real certificate for a domain you own |
+| `alb_http_redirect` | `true` | `false` closes port 80 instead of redirecting |
+| `alb_ssl_policy` | TLS 1.2/1.3 | an older or stricter policy |
+| `domain_name` | `""` | serve on a real name with a trusted certificate |
 
 ## Tearing it down
 
@@ -282,7 +409,7 @@ balancer to disappear from the console, and destroy again.
 
 ## State
 
-State is local (`terraform.tfstate`, gitignored) and **contains the generated
+State is local (`infra/terraform/terraform.tfstate`, gitignored) and **contains the generated
 database password in clear text** — that is how Terraform works, not something
 this configuration chose. Keep it off shared machines, or move to an S3 backend
 with a KMS key and DynamoDB locking if more than one person will run this.

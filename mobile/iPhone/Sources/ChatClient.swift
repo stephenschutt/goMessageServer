@@ -36,7 +36,17 @@ final class ChatClient: ObservableObject {
     /// query every 1.5 seconds.
     private static let chatRefreshEvery = 4
 
-    private static let defaultServer = "http://localhost:8080"
+    /// The deployment on EKS, behind the ALB in infra/terraform. HTTPS with a
+    /// certificate ACM issued for the name, so App Transport Security is
+    /// satisfied without an exception.
+    private static let defaultServer = "https://messages.schuttsm.com"
+
+    /// What `defaultServer` used to be. A device that ran an earlier build has
+    /// this saved in UserDefaults, where it would quietly outrank the new
+    /// default forever — so it is treated as "never chosen" rather than as a
+    /// preference worth keeping.
+    private static let legacyDefaultServer = "http://localhost:8080"
+
     private static let serverKey = "serverURL"
 
     @Published private(set) var messages: [Message] = []
@@ -53,8 +63,10 @@ final class ChatClient: ObservableObject {
     /// `messageServer -authorize`. Nil until the key store has been opened.
     @Published private(set) var publicKey: String?
 
-    /// Base URL of the Go server, editable at runtime because a physical iPhone
-    /// needs the Mac's LAN address while the simulator can use localhost.
+    /// Base URL of the Go server. It defaults to the deployed one and stays
+    /// editable at runtime, because pointing at a server running on the Mac is
+    /// how this gets developed — the simulator can use localhost, a physical
+    /// iPhone needs the Mac's address on the same Wi-Fi.
     @Published var serverURL: String {
         didSet {
             guard serverURL != oldValue else { return }
@@ -69,7 +81,8 @@ final class ChatClient: ObservableObject {
     private let keys = KeyStore.shared
 
     init() {
-        serverURL = UserDefaults.standard.string(forKey: Self.serverKey) ?? Self.defaultServer
+        let saved = UserDefaults.standard.string(forKey: Self.serverKey)
+        serverURL = (saved == nil || saved == Self.legacyDefaultServer) ? Self.defaultServer : saved!
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10

@@ -26,7 +26,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextField("http://localhost:8080", text: $draftURL)
+                    TextField("https://messages.schuttsm.com", text: $draftURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -34,7 +34,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Server")
                 } footer: {
-                    Text("The simulator can use localhost. A physical iPhone needs your Mac's address on the same Wi-Fi, e.g. http://192.168.1.20:8080.")
+                    Text("Defaults to the deployed server. To use one running on your Mac instead: the simulator can reach http://localhost:8080, a physical iPhone needs your Mac's address on the same Wi-Fi, e.g. http://192.168.1.20:8080.")
                 }
 
                 Section {

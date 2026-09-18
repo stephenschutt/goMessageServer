@@ -121,7 +121,33 @@ key can only land in `unauthorizedUsers` if it really is the caller's own.
 `/` is the one unauthenticated route: it serves the browser shell, which has to
 load before it can generate a key to sign with, and it carries no messages.
 
-## Running on a physical iPhone
+## Which server it talks to
+
+Out of the box the app points at the deployed one:
+
+```
+https://messages.schuttsm.com
+```
+
+That is the EKS cluster in `infra/terraform`, behind an ALB holding a
+certificate ACM issued for the name — so App Transport Security accepts it with
+no exemption, and nothing needs configuring to run the app on a real phone.
+
+The address is still editable at Settings (the person icon, top right) ▸
+**Server**, which is how you point it at a server on your own machine. A device
+upgrading from an older build has `http://localhost:8080` saved in
+UserDefaults; `ChatClient` treats that specific value as "never chosen" and
+moves it to the new default, so only an address you actually typed survives.
+
+The key still has to be authorized, wherever the server runs:
+
+```sh
+pod=$(kubectl -n messageserver get po -l app.kubernetes.io/name=messageserver -o name | head -1)
+kubectl -n messageserver exec "$pod" -- messageServer -pending
+kubectl -n messageserver exec "$pod" -- messageServer -authorize '<key>'
+```
+
+## Running against a server on your Mac
 
 `localhost` means the phone itself, so set the server address to your Mac's
 address on the same Wi-Fi network — Settings (the person icon, top right) ▸

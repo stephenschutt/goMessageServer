@@ -94,15 +94,52 @@ output "alb_dns_name" {
 
 output "eks_app_url" {
   description = "The plain browser client, load balanced across the pods."
-  value       = var.deploy_eks ? "http://${kubernetes_ingress_v1.app[0].status[0].load_balancer[0].ingress[0].hostname}/" : null
+  value       = var.deploy_eks ? "${local.alb_scheme}://${kubernetes_ingress_v1.app[0].status[0].load_balancer[0].ingress[0].hostname}/" : null
 }
 
 output "eks_webapp_url" {
   description = "The React client, load balanced across the pods."
-  value       = var.deploy_eks ? "http://${kubernetes_ingress_v1.app[0].status[0].load_balancer[0].ingress[0].hostname}/webapp" : null
+  value       = var.deploy_eks ? "${local.alb_scheme}://${kubernetes_ingress_v1.app[0].status[0].load_balancer[0].ingress[0].hostname}/webapp" : null
+}
+
+output "alb_certificate" {
+  description = "Which certificate the listener presents, and whether a browser will accept it without complaint."
+  value = !var.deploy_eks || !var.alb_https ? null : (
+    local.alb_self_signed
+    ? "self-signed (${local.alb_certificate_arn}) — every browser will warn; set alb_certificate_arn to a real ACM certificate to stop that"
+    : local.alb_certificate_arn
+  )
 }
 
 output "eks_pods_command" {
   description = "See the replicas."
   value       = var.deploy_eks ? "kubectl -n ${var.kubernetes_namespace} get pods -o wide" : null
+}
+
+output "acm_validation_record" {
+  description = "The DNS record proving the domain is yours. Add it at your registrar, then apply again."
+  value = !var.deploy_eks || var.domain_name == "" || var.alb_certificate_arn != "" ? null : {
+    for option in aws_acm_certificate.app[0].domain_validation_options :
+    option.domain_name => {
+      type  = option.resource_record_type
+      name  = option.resource_record_name
+      value = option.resource_record_value
+      # Namecheap's "Host" column wants the name relative to the zone, so the
+      # zone's own suffix comes off. This is that, already trimmed.
+      namecheap_host = trimsuffix(
+        trimsuffix(option.resource_record_name, "."),
+        ".${join(".", slice(split(".", var.domain_name), length(split(".", var.domain_name)) - 2, length(split(".", var.domain_name))))}"
+      )
+    }
+  }
+}
+
+output "dns_target" {
+  description = "What domain_name should point at: a CNAME to this hostname."
+  value       = var.deploy_eks ? kubernetes_ingress_v1.app[0].status[0].load_balancer[0].ingress[0].hostname : null
+}
+
+output "app_url_on_domain" {
+  description = "Where the app will answer once the records are in place."
+  value       = var.deploy_eks && var.domain_name != "" ? "https://${var.domain_name}/" : null
 }

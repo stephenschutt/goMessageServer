@@ -292,12 +292,20 @@ resource "kubernetes_ingress_v1" "app" {
     namespace = kubernetes_namespace_v1.app[0].metadata[0].name
     labels    = local.app_labels
 
-    annotations = {
+    annotations = merge({
       "alb.ingress.kubernetes.io/scheme"           = "internet-facing"
       "alb.ingress.kubernetes.io/target-type"      = "ip"
-      "alb.ingress.kubernetes.io/listen-ports"     = jsonencode([{ HTTP = 80 }])
       "alb.ingress.kubernetes.io/healthcheck-path" = "/"
       "alb.ingress.kubernetes.io/success-codes"    = "200"
+
+      # Which ports the load balancer answers on. With alb_https the listener
+      # set is 443, plus 80 only when it is there to redirect — nothing is ever
+      # served over plain HTTP.
+      "alb.ingress.kubernetes.io/listen-ports" = jsonencode(
+        var.alb_https
+        ? (var.alb_http_redirect ? [{ HTTP = 80 }, { HTTPS = 443 }] : [{ HTTPS = 443 }])
+        : [{ HTTP = 80 }]
+      )
 
       # The same "only this machine" default as the database's security group.
       "alb.ingress.kubernetes.io/inbound-cidrs" = join(",", local.allowed_cidrs)
@@ -309,7 +317,19 @@ resource "kubernetes_ingress_v1" "app" {
       # The deregistration delay is unrelated and stays: it is how long a pod
       # being replaced is given to finish the requests already in flight.
       "alb.ingress.kubernetes.io/target-group-attributes" = "deregistration_delay.timeout_seconds=30"
-    }
+      },
+      # TLS terminates at the load balancer; the hop from there to a pod stays
+      # HTTP, inside the VPC and inside the cluster security group.
+      var.alb_https ? {
+        "alb.ingress.kubernetes.io/certificate-arn" = local.alb_certificate_arn
+        "alb.ingress.kubernetes.io/ssl-policy"      = var.alb_ssl_policy
+      } : {},
+      # ssl-redirect turns the whole of the port 80 listener into a 301, so it
+      # carries no traffic of its own — it only tells a browser where to go.
+      var.alb_https && var.alb_http_redirect ? {
+        "alb.ingress.kubernetes.io/ssl-redirect" = "443"
+      } : {},
+    )
   }
 
   spec {

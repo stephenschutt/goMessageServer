@@ -227,3 +227,38 @@ variable "kubernetes_namespace" {
   type        = string
   default     = "messageserver"
 }
+
+# ---------------------------------------------------------------------------
+# TLS on the load balancer
+# ---------------------------------------------------------------------------
+
+variable "alb_https" {
+  description = "Serve over HTTPS. Nothing is served over plain HTTP: port 80 either redirects to 443 or is not opened at all. Needed for more than tidiness — the browser clients sign every request with WebCrypto, and crypto.subtle only exists in a secure context."
+  type        = bool
+  default     = true
+}
+
+variable "alb_certificate_arn" {
+  description = "ACM certificate for the listener. Empty means generate a self-signed one and import it, which works everywhere and is trusted nowhere: every browser will interrupt with a warning. Point this at a real certificate for a domain you own to make that stop."
+  type        = string
+  default     = ""
+}
+
+variable "alb_http_redirect" {
+  description = "Keep port 80 open for the sole purpose of redirecting to 443. Turning it off means an http:// URL fails to connect rather than being corrected, which is stricter and less forgiving."
+  type        = bool
+  default     = true
+}
+
+variable "alb_ssl_policy" {
+  description = "ELB security policy — which TLS versions and ciphers the listener accepts. The default allows TLS 1.2 and 1.3 only."
+  type        = string
+  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+}
+
+
+variable "domain_name" {
+  description = "Fully qualified name to serve the app on, e.g. \"messages.example.com\". Setting it requests an ACM certificate for that name; the DNS records that validate it and point it here are yours to add at your registrar, and the outputs say exactly what they are. Empty keeps the self-signed certificate."
+  type        = string
+  default     = ""
+}

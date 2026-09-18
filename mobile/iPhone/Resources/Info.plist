@@ -28,10 +28,12 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<!-- The server is plain HTTP on the local network, so App Transport
-	     Security has to be told to allow it. NSAllowsLocalNetworking covers
-	     localhost, .local names and link-local addresses; the exception
-	     domains cover a Mac reached by its LAN IP from a physical iPhone. -->
+	<!-- The deployed server is HTTPS with a certificate ACM issued for its
+	     name, which App Transport Security accepts with no help. These
+	     exemptions are for development only: a server run on the Mac is plain
+	     HTTP. NSAllowsLocalNetworking covers localhost, .local names and
+	     link-local addresses; the exception domain covers a Mac reached by its
+	     LAN IP from a physical iPhone. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
